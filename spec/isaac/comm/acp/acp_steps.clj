@@ -7,6 +7,10 @@
     [clojure.string :as str]
     [cheshire.core :as json]
     [gherclj.core :as g :refer [defgiven defwhen defthen helper!]]
+    [isaac.cli :as cli-registry]
+    [isaac.comm.acp.chat-cli :as chat-cli]
+    [isaac.comm.acp.cli :as acp-cli]
+    [isaac.server.cli.cli-steps :as cli-steps]
     [isaac.comm.acp.server :as acp-server]
     [isaac.util.jsonrpc.dispatch :as dispatch]
     [isaac.comm.acp.websocket :as acp-websocket]
@@ -20,6 +24,36 @@
     [ring.util.codec :as codec]))
 
 (helper! isaac.comm.acp.acp-steps)
+
+;; Tests exercise the CLI commands via main/run, which normally registers
+;; module-contributed commands by reading the user's isaac.edn and running
+;; module discovery. In feature tests there's no on-disk isaac.edn for the
+;; ACP module, so we register the commands directly at step-ns load time —
+;; the equivalent of what production gets via the :cli manifest extension.
+(cli-registry/register! (acp-cli/make-command))
+(cli-registry/register! (chat-cli/make-command))
+
+(declare ensure-loopback-proxy!)
+
+;; isaac's cli_steps used to auto-detect `acp.proxy-transport = loopback` in
+;; server config and call ensure-loopback-proxy! before invoking main. That
+;; ACP-specific knowledge has moved here. We hook before-scenario so any
+;; scenario whose Background sets the config gets the loopback transport +
+;; the extra-opts (:ws-connection-factory, :acp-proxy-eof-grace-ms 0) wired
+;; through isaac's generic :main-extra-opts seam.
+;; Registered as :isaac-run-preflight so isaac.server.cli.cli-steps/isaac-run
+;; calls us right before main/run — after the Background's `config:` step has
+;; set :server-config but before any extra-opts get computed.
+(defn- acp-isaac-run-preflight! []
+  (when (= "loopback" (get-in (g/get :server-config) [:acp :proxy-transport]))
+    (when (nil? (g/get :acp-remote-connection-factory))
+      (ensure-loopback-proxy!))
+    (g/update! :main-extra-opts
+               #(merge (or % {})
+                       {:ws-connection-factory  (g/get :acp-remote-connection-factory)
+                        :acp-proxy-eof-grace-ms 0}))))
+
+(cli-steps/register-isaac-run-preflight! acp-isaac-run-preflight!)
 
 (defn- query-params [query-string]
   (codec/form-decode (or query-string "")))
