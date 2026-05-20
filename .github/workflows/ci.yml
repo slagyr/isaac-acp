@@ -1,0 +1,47 @@
+name: CI Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      NO_COLOR: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Clojure and Babashka
+        uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          bb: latest
+          cli: latest
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+            .cpcache
+          key: ${{ runner.os }}-clojure-${{ hashFiles('**/deps.edn', '**/bb.edn') }}
+          restore-keys: |
+            ${{ runner.os }}-clojure-
+
+      - name: Run CI (specs + features)
+        run: bb ci

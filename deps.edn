@@ -1,0 +1,19 @@
+{:paths ["src"]
+
+ :deps  {cheshire/cheshire        {:mvn/version "5.13.0"}
+         org.babashka/http-client {:mvn/version "0.4.22"}
+         org.clojure/tools.cli    {:mvn/version "1.1.230"}}
+
+ :aliases
+ {:dev-local {:override-deps {io.github.slagyr/isaac      {:local/root "../isaac"}
+                              io.github.slagyr/isaac-spec {:local/root "../isaac/spec"}}}
+
+  :test {:extra-paths ["spec"]
+         :extra-deps  {io.github.slagyr/isaac      {:git/url "https://github.com/slagyr/isaac.git"
+                                                    :git/sha "e49d0905fda64ad89c5e9b0ffc7a3760c7660edf"}
+                       io.github.slagyr/isaac-spec {:git/url "https://github.com/slagyr/isaac.git"
+                                                    :git/sha "e49d0905fda64ad89c5e9b0ffc7a3760c7660edf"
+                                                    :deps/root "spec"}
+                       speclj/speclj               {:mvn/version "3.13.0"}
+                       babashka/process            {:mvn/version "0.5.22"}
+                       io.github.slagyr/gherclj    {:git/tag "v1.3.0" :git/sha "9c3bb1d"}}}}}
