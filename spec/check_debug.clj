@@ -1,5 +1,0 @@
-(require '[isaac.comm.acp.acp-steps :as steps])
-(println "preflight invocations:" (count @steps/_preflight-debug))
-(when (seq @steps/_preflight-debug)
-  (println "first invocation server-config:")
-  (clojure.pprint/pprint (-> @steps/_preflight-debug first :server-config)))
