@@ -17,9 +17,9 @@
                      '{io.github.slagyr/isaac      {:local/root "../isaac"}
                        io.github.slagyr/isaac-spec {:local/root "../isaac/spec"}}
                      '{io.github.slagyr/isaac      {:git/url "https://github.com/slagyr/isaac.git"
-                                                    :git/sha "0b0cef3a13f4ce5e76a12794cd68a5a10d1343ea"}
+                                                    :git/sha "83e3016b37f3b258a017e01211a00e08df43aefb"}
                        io.github.slagyr/isaac-spec {:git/url   "https://github.com/slagyr/isaac.git"
-                                                    :git/sha   "0b0cef3a13f4ce5e76a12794cd68a5a10d1343ea"
+                                                    :git/sha   "83e3016b37f3b258a017e01211a00e08df43aefb"
                                                     :deps/root "spec"}})}))
 
   spec     {:doc      "Run ACP specs"
@@ -41,4 +41,7 @@
 
   ci       {:doc  "Run all specs and features"
             :task (do (shell "bb" "spec")
-                      (shell "bb" "features"))}}}
+                      (shell "bb" "features"))}
+
+  clean    {:doc  "Remove the target/ build dir (gherclj-generated specs, etc.)"
+            :task (babashka.fs/delete-tree "target")}}}
