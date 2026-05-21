@@ -418,11 +418,15 @@
             pending-request*    (atom [])
             active?             (atom true)
             input-queue         (start-input-reader! opts)
-            ;; Private 2-thread scheduler dedicated to this proxy invocation
-            ;; (one for the tick loop, one for the reconnect handler — so a
-            ;; long connect attempt doesn't starve the tick). tick-ms 1 so
-            ;; test backoffs (1ms) don't get delayed by the default 50ms tick.
-            scheduler-instance  (-> (scheduler/create {:pool-size 2})
+            ;; Private 1-thread scheduler dedicated to this proxy invocation.
+            ;; The proxy only schedules one task (the reconnect retry); tick
+            ;; submits the handler and exits before the handler runs, so
+            ;; there's nothing to starve. Hard-cap explicitly because the
+            ;; scheduler's default of (max 2 (* 2 cpu-count)) is sized for
+            ;; the server-wide scheduler, not a per-CLI-invocation one.
+            ;; tick-ms 1 so test backoffs (1ms) don't get delayed by the
+            ;; default 50ms tick.
+            scheduler-instance  (-> (scheduler/create {:pool-size 1})
                                     (assoc :tick-ms 1)
                                     (scheduler/start!))
             eof-grace-ms        (or (:acp-proxy-eof-grace-ms opts) 50)
