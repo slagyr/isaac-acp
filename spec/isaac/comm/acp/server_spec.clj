@@ -113,7 +113,8 @@
                                      :providers {}
                                      :cron {}}
                     :home           test-dir
-                    :model-override nil}
+                    :model-override nil
+                    :crew           "main"}
                    @captured-request))))
 
     )
@@ -329,7 +330,7 @@
                            :providers {"grover" {}}}
             captured-cfg  (atom nil)
             response      (with-redefs [single-turn/run-turn!
-                                        (fn [_session-key _text _opts]
+                                        (fn [_charge]
                                           (reset! captured-cfg (config/snapshot))
                                           {})]
                             (sut/dispatch-line {:state-dir     test-dir

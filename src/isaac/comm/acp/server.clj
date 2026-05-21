@@ -177,10 +177,6 @@
   (emit-command-text! output-writer session-id message)
   {:stopReason "end_turn"})
 
-(defn- unknown-crew-message [crew-id]
-  (str "unknown crew: " crew-id "\n"
-       "use /crew {name} to switch, or add " crew-id " to config\n"))
-
 (defn- run-prompt [output-writer session-id text ctx]
   (let [channel  (acp-comm/channel output-writer)
         payload  (assoc ctx :comm channel
@@ -210,22 +206,20 @@
       {:stopReason "end_turn"})))
 
 (defn- session-prompt-handler [output-writer crew-members models provider-configs cfg home model-override params _message]
-  (let [session-id       (get params :sessionId)
-        text             (prompt->text (get params :prompt))
-        session-entry    (when session-id (store/get-session (session-store) session-id))
-        crew-members     (resolve-crew-members crew-members cfg)
-        effective-cfg    (effective-cfg cfg crew-members (or models {}) (or provider-configs {}))
-        _                (config/set-snapshot! effective-cfg)]
+  (let [session-id    (get params :sessionId)
+        text          (prompt->text (get params :prompt))
+        session-entry (when session-id (store/get-session (session-store) session-id))
+        crew-members  (resolve-crew-members crew-members cfg)
+        effective-cfg (effective-cfg cfg crew-members (or models {}) (or provider-configs {}))
+        _             (config/set-snapshot! effective-cfg)]
     (when (nil? session-id)
       (throw (invalid-params "sessionId is required")))
     (when (nil? text)
       (throw (invalid-params "Invalid params: no text in prompt")))
-    (let [result (run-prompt output-writer session-id text {:cfg            effective-cfg
-                                                            :home           home
-                                                            :model-override model-override})]
-      (if (and (= :unknown-crew (:error result)) session-entry)
-        (end-turn-with-error! output-writer session-id (unknown-crew-message (or (:crew session-entry) (:agent session-entry))))
-        result))))
+    (run-prompt output-writer session-id text {:cfg            effective-cfg
+                                               :home           home
+                                               :model-override model-override
+                                               :crew           (or (:crew session-entry) (:agent session-entry))})))
 
 (defn handlers
   [{:keys [crew-id crew-members models provider-configs cfg home output-writer model-override] :or {crew-id "main"}}]
