@@ -18,12 +18,17 @@
 
 (describe "ACP channel"
 
-  (it "registers the /acp WebSocket route from core manifest activation"
+  (it "registers the /acp WebSocket route when the ACP module activates"
     (binding [registry/*registry* (atom (registry/fresh-registry))
               routes/*registry*    (atom (routes/fresh-registry))]
       (module-loader/clear-activations!)
       (should-not (routes/route-registered? :get "/acp"))
-      (module-loader/activate-core!)
+      (module-loader/activate! :isaac.comm.acp
+                               {:isaac.comm.acp
+                                {:manifest {:id      :isaac.comm.acp
+                                            :version "0.1.0"
+                                            :route   {[:get "/acp"]
+                                                      'isaac.comm.acp.websocket/handler}}}})
       (should (routes/route-registered? :get "/acp"))))
 
   (it "exposes the AcpComm constructor and no longer exposes AcpChannel"
