@@ -1,19 +1,18 @@
 (ns isaac.comm.acp.websocket
-  (:import
-    (java.util.concurrent Executors ExecutorService ThreadFactory))
   (:require
     [cheshire.core :as json]
-    [clojure.string :as str]
     [isaac.comm.acp.server :as acp-server]
-    [isaac.util.jsonrpc.dispatch :as dispatch]
     [isaac.config.loader :as config]
     [isaac.fs :as fs]
     [isaac.logger :as log]
     [isaac.session.store :as store]
     [isaac.session.store.file :as file-store]
     [isaac.system :as system]
+    [isaac.util.jsonrpc.dispatch :as dispatch]
     [org.httpkit.server :as httpkit]
-    [ring.util.codec :as codec]))
+    [ring.util.codec :as codec])
+  (:import
+    (java.util.concurrent ExecutorService Executors ThreadFactory)))
 
 (defn- request-client [request]
   (or (get-in request [:headers "x-forwarded-for"])
@@ -38,12 +37,12 @@
   (httpkit/send! channel line))
 
 (defonce ^:private ^ExecutorService dispatch-executor
-  (Executors/newFixedThreadPool
-    8
-    (reify ThreadFactory
-      (newThread [_ r]
-        (doto (Thread. ^Runnable r "acp-ws-dispatch")
-          (.setDaemon true))))))
+         (Executors/newFixedThreadPool
+           8
+           (reify ThreadFactory
+             (newThread [_ r]
+               (doto (Thread. ^Runnable r "acp-ws-dispatch")
+                 (.setDaemon true))))))
 
 (defn- requested-session-key [{:keys [query-params crew-id]}]
   (let [state-dir         (system/get :state-dir)
@@ -106,10 +105,10 @@
 
                                          attach-key
                                          (dispatch/handle-line (assoc (acp-server/handlers server-opts)
-                                                            "session/new"
-                                                            (fn [_ _] (acp-server/attach-session-result! (:output-writer server-opts)
-                                                                                                         attach-key)))
-                                                          line)
+                                                                 "session/new"
+                                                                 (fn [_ _] (acp-server/attach-session-result! (:output-writer server-opts)
+                                                                                                              attach-key)))
+                                                               line)
 
                                          :else
                                          (acp-server/dispatch-line server-opts line))]
@@ -158,8 +157,8 @@
 
 (defn handler [request]
   (let [opts     {:cfg          (config/snapshot)
-                   :query-params (query-params request)
-                   :state-dir    (system/get :state-dir)}
+                  :query-params (query-params request)
+                  :state-dir    (system/get :state-dir)}
         cfg-opts opts]
     (if-not (:websocket? request)
       {:status  400
@@ -169,17 +168,17 @@
                                                  (log/debug :acp-ws/connection-opened
                                                             :client (request-client request)
                                                             :uri (:uri request)))
-                                    :on-close   (fn
-                                                  ([_channel status]
-                                                   (log/debug :acp-ws/connection-closed
-                                                              :client (request-client request)
-                                                              :status status
-                                                              :uri (:uri request)))
-                                                  ([_channel status reason]
-                                                   (log/debug :acp-ws/connection-closed
-                                                              :client (request-client request)
-                                                              :reason reason
-                                                              :status status
-                                                              :uri (:uri request))))
-                                    :on-receive (fn [channel line]
-                                                  (receive-line! opts request #(send-line! request channel %) line))}))))
+                                   :on-close   (fn
+                                                 ([_channel status]
+                                                  (log/debug :acp-ws/connection-closed
+                                                             :client (request-client request)
+                                                             :status status
+                                                             :uri (:uri request)))
+                                                 ([_channel status reason]
+                                                  (log/debug :acp-ws/connection-closed
+                                                             :client (request-client request)
+                                                             :reason reason
+                                                             :status status
+                                                             :uri (:uri request))))
+                                   :on-receive (fn [channel line]
+                                                 (receive-line! opts request #(send-line! request channel %) line))}))))
