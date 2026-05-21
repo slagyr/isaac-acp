@@ -55,10 +55,6 @@
       (binding [fs/*fs* (fs/mem-fs)]
         (it))))
 
-  (it "caps the exponential reconnect delay at the configured max"
-    (should= 5 (#'sut/reconnect-delay-ms 4 {:acp-proxy-reconnect-delay-ms 1
-                                            :acp-proxy-reconnect-max-delay-ms 5})))
-
   (it "emits ACP-conformant disconnect and reconnect notifications"
     (let [transport                  (ws/reconnectable-loopback)
           state-dir                  (str "/test/acp-proxy-reconnect-" (random-uuid))

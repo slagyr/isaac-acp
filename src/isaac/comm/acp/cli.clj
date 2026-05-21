@@ -12,6 +12,7 @@
     [isaac.util.ws-client :as ws]
     [isaac.config.loader :as config]
     [isaac.logger :as log]
+    [isaac.scheduler :as scheduler]
     [isaac.session.store :as store]
     [isaac.session.store.file :as file-store]
     [isaac.system :as system]
@@ -244,51 +245,68 @@
               (recur))))))
     queue))
 
-(defn- reconnect-delay-ms [attempt opts]
-  (let [base-delay (or (:acp-proxy-reconnect-delay-ms opts) 1000)
-        max-delay  (or (:acp-proxy-reconnect-max-delay-ms opts) 5000)]
-    (min max-delay (* base-delay (long (Math/pow 2 (dec attempt)))))))
+(declare send-request! safe-close!)
 
-(declare send-request!)
+(def ^:private reconnect-task-id :acp-proxy/reconnect)
 
-(defn- reconnect! [active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts]
-  (when (compare-and-set! reconnecting? nil ::starting)
-    (let [runner (future
-                   (try
-                     (loop [attempt 1]
-                       (when @active?
-                         (log/info :acp-proxy/reconnect-attempt :attempt attempt :url url)
-                         (Thread/sleep (reconnect-delay-ms attempt opts))
-                         (if-let [new-conn (try
-                                             (connect-remote! factory url token)
-                                             (catch Exception _ nil))]
-                           (do
-                             (reset! conn* new-conn)
-                             (reset! remote-queue* (start-remote-reader! new-conn))
-                             (reset! disconnected? false)
-                             (write-status-notification! session-id* opts "reconnected to remote")
-                             (doseq [{:keys [line]} @pending-request*]
-                               (try (send-request! @conn* session-id* url line)
-                                    (catch Exception _ nil)))
-                             (log/debug :acp-proxy/connected :url url))
-                           (recur (inc attempt)))))
-                     (catch InterruptedException _
-                       nil)
-                     (finally
-                       (reset! reconnecting? nil))))]
-       (reset! reconnecting? runner)))
-  nil)
+(defn- reconnect-handler
+  "Scheduler handler for one reconnect attempt. Scheduler invokes with
+   one ctx-map arg (ignored). Returns nil on success so the task
+   completes; throws on failure so the scheduler's :retry policy
+   reschedules with exponential backoff.
 
-(declare safe-close!)
+   `bound-fn` captures the caller's dynamic bindings — most importantly
+   `*out*` — so write-status-notification! writes to the proxy's stdout
+   writer rather than the scheduler thread's default *out*."
+  [_scheduler active? conn* remote-queue* disconnected? session-id*
+   pending-request* factory url token opts]
+  (bound-fn [_run-ctx]
+    (when @active?
+      (log/info :acp-proxy/reconnect-attempt :url url)
+      (let [new-conn (connect-remote! factory url token)]
+        (reset! conn* new-conn)
+        (reset! remote-queue* (start-remote-reader! new-conn))
+        (reset! disconnected? false)
+        (write-status-notification! session-id* opts "reconnected to remote")
+        (doseq [{:keys [line]} @pending-request*]
+          (try (send-request! @conn* session-id* url line)
+               (catch Exception _ nil)))
+        (log/debug :acp-proxy/connected :url url)))))
 
-(defn- connection-lost! [active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts]
+(defn- schedule-reconnect!
+  "Schedules a one-shot reconnect attempt against scheduler-instance. On
+   failure the scheduler's :retry policy reschedules with exponential
+   backoff (base→max) — no manual loop. cancel! before reschedule so a
+   second drop while still trying doesn't error on duplicate id."
+  [scheduler-instance active? conn* remote-queue* disconnected? session-id*
+   pending-request* factory url token opts]
+  ;; Scheduler requires :pos? for delays — clamp to 1ms minimum so legacy
+  ;; opts that pass 0 still work (the old hand-rolled loop accepted 0 fine).
+  (let [base-delay (max 1 (or (:acp-proxy-reconnect-delay-ms opts) 1000))
+        max-delay  (max 1 (or (:acp-proxy-reconnect-max-delay-ms opts) 5000))]
+    (scheduler/cancel! scheduler-instance reconnect-task-id)
+    (scheduler/schedule!
+      scheduler-instance
+      {:id             reconnect-task-id
+       :trigger        {:kind :delay :ms base-delay}
+       :handler        (reconnect-handler scheduler-instance active? conn* remote-queue*
+                                          disconnected? session-id* pending-request*
+                                          factory url token opts)
+       :on-error       :retry
+       :backoff-ms     base-delay
+       :max-backoff-ms max-delay
+       :retry-attempts Long/MAX_VALUE})))
+
+(defn- connection-lost! [scheduler-instance active? conn* remote-queue* disconnected?
+                          session-id* pending-request* factory url token opts]
   (when-not @disconnected?
     (reset! disconnected? true)
     (write-status-notification! session-id* opts "remote connection lost")
     (log/debug :acp-proxy/disconnected :url url)
     (safe-close! @conn*)
     (reset! conn* nil)
-    (reconnect! active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts)))
+    (schedule-reconnect! scheduler-instance active? conn* remote-queue* disconnected?
+                         session-id* pending-request* factory url token opts)))
 
 (defn- poll-event [queue timeout-ms]
   (.poll queue timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS))
@@ -304,10 +322,6 @@
     (catch Exception _
       nil)))
 
-(defn- cancel-future! [candidate]
-  (when (instance? java.util.concurrent.Future candidate)
-    (future-cancel candidate)))
-
 (defn- await-connected! [active? disconnected?]
   (loop []
     (cond
@@ -317,7 +331,7 @@
                               (Thread/sleep 10)
                               (recur)))))
 
-(defn- forward-input-line! [active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts line]
+(defn- forward-input-line! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts line]
   (loop []
     (cond
       (not @active?) nil
@@ -329,7 +343,7 @@
                       (swap! pending-request* conj {:id id :line line}))
                     true
                     (catch Exception _
-                      (connection-lost! active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts)
+                      (connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)
                       false))]
         (when-not sent?
           (when (await-connected! active? disconnected?)
@@ -346,7 +360,7 @@
                                                   5000)}
            opts)))
 
-(defn- run-stdin-thread! [active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts input-queue]
+(defn- run-stdin-thread! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts input-queue]
   (future
     (loop []
       (when @active?
@@ -359,13 +373,13 @@
             nil
 
             (= :stdin (:type event))
-            (do (forward-input-line! active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts (:line event))
+            (do (forward-input-line! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts (:line event))
                 (recur))
 
             :else
             (recur)))))))
 
-(defn- run-remote-thread! [active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts]
+(defn- run-remote-thread! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts]
   (future
     (loop []
       (when @active?
@@ -380,10 +394,10 @@
                   (swap! pending-request* (fn [reqs] (vec (remove #(= response-id (:id %)) reqs))))))
 
               :connection-error
-              (connection-lost! active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts)
+              (connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)
 
               :connection-lost
-              (connection-lost! active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts)
+              (connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)
 
               nil))
           (recur))))))
@@ -397,19 +411,25 @@
       (system/register! :state-dir state-dir)
       (store/register! (or (config/snapshot) {}) state-dir))
     (try
-      (let [conn*            (atom (connect-remote! factory url token))
-            remote-queue*    (atom (start-remote-reader! @conn*))
-            reconnecting?    (atom nil)
-            disconnected?    (atom false)
-            session-id*      (atom (default-session-id opts))
-            pending-request* (atom [])
-            active?          (atom true)
-            input-queue      (start-input-reader! opts)
-            eof-grace-ms      (or (:acp-proxy-eof-grace-ms opts) 50)
-            pending-timeout-ms (or (:acp-proxy-pending-timeout-ms opts) 2000)]
+      (let [conn*               (atom (connect-remote! factory url token))
+            remote-queue*       (atom (start-remote-reader! @conn*))
+            disconnected?       (atom false)
+            session-id*         (atom (default-session-id opts))
+            pending-request*    (atom [])
+            active?             (atom true)
+            input-queue         (start-input-reader! opts)
+            ;; Private 2-thread scheduler dedicated to this proxy invocation
+            ;; (one for the tick loop, one for the reconnect handler — so a
+            ;; long connect attempt doesn't starve the tick). tick-ms 1 so
+            ;; test backoffs (1ms) don't get delayed by the default 50ms tick.
+            scheduler-instance  (-> (scheduler/create {:pool-size 2})
+                                    (assoc :tick-ms 1)
+                                    (scheduler/start!))
+            eof-grace-ms        (or (:acp-proxy-eof-grace-ms opts) 50)
+            pending-timeout-ms  (or (:acp-proxy-pending-timeout-ms opts) 2000)]
         (log/debug :acp-proxy/connected :url url)
-        (let [stdin-fut  (run-stdin-thread! active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts input-queue)
-              remote-fut (run-remote-thread! active? conn* remote-queue* reconnecting? disconnected? session-id* pending-request* factory url token opts)]
+        (let [stdin-fut  (run-stdin-thread! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts input-queue)
+              remote-fut (run-remote-thread! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)]
           (try
             @stdin-fut
             (let [pending-deadline (+ (System/currentTimeMillis) pending-timeout-ms)]
@@ -428,7 +448,7 @@
                (reset! active? false)
                (future-cancel remote-fut)
                (try @remote-fut (catch Exception _))
-               (cancel-future! @reconnecting?)
+               (scheduler/shutdown! scheduler-instance)
                (log/debug :acp-proxy/disconnected :url url)
                (safe-close! @conn*)))))
       (catch Exception e

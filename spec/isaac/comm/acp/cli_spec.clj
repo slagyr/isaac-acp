@@ -9,6 +9,7 @@
     [isaac.cli :as registry]
     [isaac.logger :as log]
     [isaac.fs :as fs]
+    [isaac.scheduler :as scheduler]
     [isaac.spec-helper :as helper]
     [isaac.system :as system]
     [speclj.core :refer :all])
@@ -302,32 +303,31 @@
           (should (str/includes? output "\"id\":2")))))
 
   (it "does not exit reconnect mode when closing an already-dead remote socket throws"
-    (let [active?       (atom false)
-          conn*         (atom (reify ws/WsConnection
-                                (ws-send! [_ _] nil)
-                                (ws-receive! [_] nil)
-                                (ws-receive! [_ _] nil)
-                                (ws-close! [_]
-                                  (throw (ex-info "socket already closed" {})))))
-          remote-queue* (atom nil)
-          reconnecting? (atom nil)
-          disconnected? (atom false)
-          session-id*   (atom nil)]
-      (#'sut/connection-lost! active? conn* remote-queue* reconnecting? disconnected? session-id* (atom nil)
-                              (fn [_ _]
-                                (reify ws/WsConnection
-                                  (ws-send! [_ _] nil)
-                                  (ws-receive! [_] nil)
-                                  (ws-receive! [_ _] nil)
-                                  (ws-close! [_] nil)))
-                              "ws://test/acp" nil {:acp-proxy-reconnect-delay-ms 0
-                                                    :acp-proxy-reconnect-max-delay-ms 0})
-      (should @disconnected?)))
-
-  (it "ignores reconnect sentinels that are not futures during shutdown"
-    (should= nil (#'sut/cancel-future! ::starting))
-    (let [runner (future (Thread/sleep 1000))]
-      (#'sut/cancel-future! runner)
-      (should (.isCancelled runner))))
+    (let [scheduler-instance (-> (scheduler/create {:pool-size 1})
+                                 (assoc :tick-ms 1)
+                                 (scheduler/start!))
+          active?            (atom false)
+          conn*              (atom (reify ws/WsConnection
+                                     (ws-send! [_ _] nil)
+                                     (ws-receive! [_] nil)
+                                     (ws-receive! [_ _] nil)
+                                     (ws-close! [_]
+                                       (throw (ex-info "socket already closed" {})))))
+          remote-queue*      (atom nil)
+          disconnected?      (atom false)
+          session-id*        (atom nil)]
+      (try
+        (#'sut/connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* (atom nil)
+                                (fn [_ _]
+                                  (reify ws/WsConnection
+                                    (ws-send! [_ _] nil)
+                                    (ws-receive! [_] nil)
+                                    (ws-receive! [_ _] nil)
+                                    (ws-close! [_] nil)))
+                                "ws://test/acp" nil {:acp-proxy-reconnect-delay-ms 0
+                                                     :acp-proxy-reconnect-max-delay-ms 0})
+        (should @disconnected?)
+        (finally
+          (scheduler/shutdown! scheduler-instance)))))
 
   )
