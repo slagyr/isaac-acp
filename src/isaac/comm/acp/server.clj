@@ -183,7 +183,10 @@
 
 (defn- run-prompt [output-writer session-id text ctx]
   (let [channel  (acp-comm/channel output-writer)
-        payload  (assoc ctx :comm channel :session-key session-id :input text)
+        payload  (assoc ctx :comm channel
+                             :session-key session-id
+                             :input text
+                             :state-dir (or (:state-dir ctx) (system/get :state-dir)))
         result   (try
                    (with-startup-cwd #(bridge/dispatch! (charge/build payload)))
                   (catch Exception e
