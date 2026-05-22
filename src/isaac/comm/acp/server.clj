@@ -2,17 +2,22 @@
   (:require
     [isaac.bridge.cancellation :as bridge-cancel]
     [isaac.bridge.core :as bridge]
-    [isaac.bridge.status :as bridge-status]
+    [isaac.charge :as charge]
     [isaac.comm.acp :as acp-comm]
     [isaac.config.loader :as config]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.jsonrpc.dispatch :as dispatch]
     [isaac.drive.turn :as single-turn]
+    [isaac.llm.api :as llm-api]
     [isaac.logger :as log]
     [isaac.session.store :as store]
     [isaac.session.store.file :as file-store]
     [isaac.session.transcript :as message-content]
+    [isaac.slash.registry :as slash-registry]
     [isaac.system :as system]))
+
+(defn- available-commands []
+  (slash-registry/all-commands (:module-index (or (config/snapshot) {}))))
 
 (def ^:private startup-cwd (System/getProperty "user.dir"))
 
@@ -35,7 +40,7 @@
                     :message message}))
 
 (defn- duplicate-session-response [message session-id]
-  {:notifications [(acp-comm/available-commands-update session-id (bridge-status/available-commands))]
+  {:notifications [(acp-comm/available-commands-update session-id (available-commands))]
    :response      {:jsonrpc "2.0"
                    :id      (:id message)
                    :error   {:code    jrpc/INVALID_PARAMS
@@ -51,7 +56,7 @@
                                                        :channel  "acp"
                                                        :chatType "direct"
                                                        :origin   {:kind :acp}}))]
-        {:notifications [(acp-comm/available-commands-update (:id session) (bridge-status/available-commands))]
+        {:notifications [(acp-comm/available-commands-update (:id session) (available-commands))]
          :result        {:sessionId (:id session)}}))))
 
 (defn- initialize-result [model provider]
@@ -81,7 +86,7 @@
                                                                              model-override (assoc :model-override model-override)))]
     (initialize-result model
                          (when provider
-                           ((requiring-resolve 'isaac.llm.api/display-name) provider)))))
+                           (llm-api/display-name provider)))))
 
 (defn- prompt->text [prompt]
   (->> (or prompt [])
@@ -180,7 +185,7 @@
   (let [channel  (acp-comm/channel output-writer)
         payload  (assoc ctx :comm channel :session-key session-id :input text)
         result   (try
-                   (with-startup-cwd #(bridge/dispatch! payload))
+                   (with-startup-cwd #(bridge/dispatch! (charge/build payload)))
                   (catch Exception e
                     (log/ex :acp/turn-error e :session session-id)
                     {:error :exception :message (or (.getMessage e) "Unexpected error")}))]
