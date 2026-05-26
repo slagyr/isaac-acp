@@ -51,3 +51,22 @@ Feature: ACP Slash Commands
       | params.prompt[0].type | text           |
       | params.prompt[0].text | /status        |
     Then session "cmd-test" has no transcript entries with role "user"
+
+  @wip
+  Scenario: a config-defined prompt-template command is advertised with an argument hint
+    Given the isaac file "config/commands/work.md" exists with:
+      """
+      ---
+      type: command
+      description: Start work on a ready bean
+      params: [bean]
+      ---
+      Start work on bean {{bean}}.
+      """
+    When the ACP client sends request 2:
+      | key         | value       |
+      | method      | session/new |
+      | params.name | cmd-test    |
+    Then the ACP agent sends notifications:
+      | method         | params.update.sessionUpdate | params.update.availableCommands[5].name | params.update.availableCommands[5].description | params.update.availableCommands[5].input.hint |
+      | session/update | available_commands_update   | work                                    | Start work on a ready bean                     | bean                                          |
