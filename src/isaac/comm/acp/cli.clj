@@ -14,7 +14,6 @@
     [isaac.logger :as log]
     [isaac.scheduler :as scheduler]
     [isaac.session.store :as store]
-    [isaac.session.store.file :as file-store]
     [isaac.system :as system]
     [isaac.tool.builtin :as builtin]))
 
@@ -38,6 +37,11 @@
 (defn- home-dir [{:keys [home state-dir]}]
   (or home state-dir (System/getProperty "user.home")))
 
+(defn- state-dir [opts]
+  (or (:state-dir opts)
+      (some-> (:home opts) (str "/.isaac"))
+      (str (home-dir opts) "/.isaac")))
+
 (defn- valid-model? [server-opts model-alias]
   (if-let [models (:models server-opts)]
     (contains? models model-alias)
@@ -47,11 +51,11 @@
                     (config/parse-model-ref model-alias))))))
 
 (defn- build-server-opts [opts]
-  (let [home      (home-dir opts)
-        cfg       (config/normalize-config (config/load-config {:home home}))
-        sdir      (or (:state-dir opts) (:stateDir cfg)
-                       (str home "/.isaac"))
-        out       (or (:output-writer opts) *out*)
+  (let [home         (home-dir opts)
+        requested-sdir (state-dir opts)
+        cfg          (config/normalize-config (config/load-config {:state-dir requested-sdir}))
+        sdir         (or (:state-dir cfg) (:stateDir cfg) requested-sdir)
+        out          (or (:output-writer opts) *out*)
         crew-members (or (when (map? (:crew opts)) (:crew opts)) (:agents opts))
         models    (:models opts)
         prov-cfgs (:provider-configs opts)
@@ -80,7 +84,8 @@
 
 (defn- session-store []
   (or (system/get :session-store)
-      (file-store/create-store (system/get :state-dir))))
+      (store/registered-store)
+      (store/create (system/get :state-dir))))
 
 (defn- session-exists? [session-key]
   (some? (store/get-transcript (session-store) session-key)))
@@ -120,7 +125,7 @@
 (defn- ensure-local-config! [opts]
   (when-not (or (map? (:crew opts))
                 (map? (:agents opts)))
-    (let [result (config/load-config-result {:home (home-dir opts)})]
+    (let [result (config/load-config-result {:state-dir (state-dir opts)})]
       (when (:missing-config? result)
         (print-error! (get-in result [:errors 0 :value]))
         false))))
@@ -409,7 +414,7 @@
         factory (or (:ws-connection-factory opts) ws/connect!)]
     (when-let [state-dir (:state-dir opts)]
       (system/register! :state-dir state-dir)
-      (store/register! (or (config/snapshot) {}) state-dir))
+      (store/register! (or (config/snapshot "ACP CLI remote session-store bootstrap") {}) state-dir))
     (try
       (let [conn*               (atom (connect-remote! factory url token))
             remote-queue*       (atom (start-remote-reader! @conn*))
@@ -470,7 +475,7 @@
 (defn- run-local [opts crew-id model-alias session-key resume?]
   (let [server-opts (build-server-opts opts)]
     (system/register! :state-dir (:state-dir server-opts))
-    (store/register! (or (config/snapshot) {}) (:state-dir server-opts))
+    (store/register! (or (config/snapshot "ACP CLI local session-store bootstrap") {}) (:state-dir server-opts))
     (let [resumed-key (when resume? (resumed-session-key crew-id))
           attach-key  (resolve-attach-key session-key resumed-key)]
       (cond

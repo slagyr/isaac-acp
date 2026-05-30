@@ -70,8 +70,7 @@ Feature: ACP Error Response Format
     And the notification content matches:
       | pattern                                     |
       | unknown crew on session stale-crew: marvin |
-      | pass --crew to override                    |
-    And the notification content does not contain "/crew <name>"
+      | send /crew <name> to change crew           |
     And the ACP agent sends response 3:
       | key               | value    |
       | result.stopReason | end_turn |

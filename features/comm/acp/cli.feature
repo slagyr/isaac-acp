@@ -7,6 +7,7 @@ Feature: ACP command
 
   Background:
     Given default Grover setup
+    And the ACP commands are registered
 
   Scenario: acp command is registered and has help
     When isaac is run with "help acp"

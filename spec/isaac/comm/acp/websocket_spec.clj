@@ -40,7 +40,7 @@
   (describe "dispatch-line"
 
     (it "reuses the most recent session for session/new when resume=true is set"
-      (binding [fs/*fs* (fs/mem-fs)]
+      (system/with-nested-system {:fs (fs/mem-fs)}
         (let [state-dir (str "/test/acp-ws-resume-" (random-uuid))
               older     "older"
               recent    "recent"
@@ -57,7 +57,7 @@
           (should= 2 (count (helper/list-sessions state-dir "main"))))))
 
     (it "reuses the most recent session when state-dir and crew are provided by handler inputs"
-      (binding [fs/*fs* (fs/mem-fs)]
+      (system/with-nested-system {:fs (fs/mem-fs)}
         (let [state-dir (str "/test/acp-home-" (random-uuid) "/.isaac")
               older     "older"
               recent    "recent"
@@ -75,7 +75,7 @@
           (should= 2 (count (helper/list-sessions state-dir "marvin"))))))
 
     (it "attaches a requested session and replays its transcript on session/new"
-      (binding [fs/*fs* (fs/mem-fs)]
+      (system/with-nested-system {:fs (fs/mem-fs)}
         (let [state-dir     (str "/test/acp-home-" (random-uuid) "/.isaac")
               session-key   "tidy-comet"
               notifications (atom [])
@@ -101,7 +101,7 @@
 
     (it "returns websocket required for non-websocket requests"
       (system/with-system {}
-        (config/set-snapshot! {})
+        (config/set-snapshot! {} "ACP websocket-spec non-websocket request")
         (let [response (sut/handler {:websocket? false :headers {}})]
           (should= 400 (:status response))
           (should= "websocket required" (:body response)))))
@@ -112,7 +112,7 @@
                                            (reset! captured [request opts])
                                            {:body :channel})]
           (system/with-system {}
-            (config/set-snapshot! {})
+            (config/set-snapshot! {} "ACP websocket-spec websocket upgrade")
             (let [response (sut/handler {:websocket? true
                                          :headers    {}})]
               (should= :channel (:body response))
@@ -126,7 +126,7 @@
                                            :ok)]
           (log/capture-logs
             (system/with-system {}
-              (config/set-snapshot! {})
+              (config/set-snapshot! {} "ACP websocket-spec lifecycle logs")
               (sut/handler {:websocket? true
                             :uri        "/acp"
                             :headers    {"x-forwarded-for" "127.0.0.1"}}))
@@ -145,7 +145,7 @@
                                                  (jrpc/result 1 {:ok true}))]
           (log/capture-logs
             (system/with-system {}
-              (config/set-snapshot! {})
+              (config/set-snapshot! {} "ACP websocket-spec initialize logs")
               (sut/handler {:websocket? true
                             :uri        "/acp"
                             :headers    {}}))
@@ -166,7 +166,7 @@
                                                  (jrpc/result 2 {:sessionId "agent:main:acp:direct:user1"}))]
           (log/capture-logs
             (system/with-system {}
-              (config/set-snapshot! {})
+              (config/set-snapshot! {} "ACP websocket-spec session-new logs")
               (sut/handler {:websocket? true
                             :uri        "/acp"
                             :headers    {}}))
@@ -186,7 +186,7 @@
                                                (should= "grover2" (:model-override opts))
                                                (jrpc/result 1 {:ok true}))]
         (system/with-system {}
-          (config/set-snapshot! {})
+          (config/set-snapshot! {} "ACP websocket-spec query param overrides")
           (sut/handler {:websocket?  true
                         :uri         "/acp"
                         :query-string "crew=ketch&model=grover2&resume=true"}))))
@@ -204,11 +204,11 @@
                                                  (swap! captured conj (:cfg opts))
                                                  (jrpc/result 1 {:ok true}))]
           (system/with-system {}
-            (config/set-snapshot! @cfg*)
+            (config/set-snapshot! @cfg* "ACP websocket-spec first snapshot")
             (sut/handler {:websocket? true :uri "/acp" :headers {}})
             ((:on-receive @channel*) :channel frame)
             (reset! cfg* {:v 2})
-            (config/set-snapshot! @cfg*)
+            (config/set-snapshot! @cfg* "ACP websocket-spec second snapshot")
             ((:on-receive @channel*) :channel frame)
             (should= {:v 1} (first @captured))
             (should= {:v 2} (second @captured))))))
@@ -242,7 +242,7 @@
                                                                          nil)
                                                       nil)))]
           (system/with-system {}
-            (config/set-snapshot! {})
+            (config/set-snapshot! {} "ACP websocket-spec prompt cancel ordering")
             (sut/handler {:websocket? true
                           :uri        "/acp"
                           :headers    {}}))
@@ -271,7 +271,7 @@
                         @release*
                         (jrpc/result 2 {:stopReason "end_turn"}))]
             (system/with-system {}
-              (config/set-snapshot! {})
+              (config/set-snapshot! {} "ACP websocket-spec malformed request")
               (sut/handler {:websocket? true
                             :uri        "/acp"
                             :headers    {}}))

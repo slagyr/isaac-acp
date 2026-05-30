@@ -52,7 +52,6 @@ Feature: ACP Slash Commands
       | params.prompt[0].text | /status        |
     Then session "cmd-test" has no transcript entries with role "user"
 
-  @wip
   Scenario: a config-defined prompt-template command is advertised with an argument hint
     Given the isaac file "config/commands/work.md" exists with:
       """

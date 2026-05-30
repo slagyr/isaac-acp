@@ -4,6 +4,7 @@ Feature: ACP Resume
 
   Background:
     Given default Grover setup
+    And the ACP commands are registered
     And the isaac EDN file "config/crew/ketch.edn" exists with:
       | path | value |
       | model | grover |

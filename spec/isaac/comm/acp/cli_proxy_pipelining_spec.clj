@@ -3,10 +3,11 @@
     [cheshire.core :as json]
     [clojure.string :as str]
     [isaac.comm.acp.cli :as sut]
-    [isaac.util.jsonrpc :as jrpc]
-    [isaac.util.ws-client :as ws]
     [isaac.fs :as fs]
     [isaac.spec-helper :as helper]
+    [isaac.system :as system]
+    [isaac.util.jsonrpc :as jrpc]
+    [isaac.util.ws-client :as ws]
     [speclj.core :refer :all])
   (:import
     (java.io BufferedReader StringReader StringWriter)
@@ -42,7 +43,7 @@
   #_{:clj-kondo/ignore [:invalid-arity]}
   (around [it]
     (helper/with-memory-store
-      (binding [fs/*fs* (fs/mem-fs)]
+      (system/with-nested-system {:fs (fs/mem-fs)}
         (it))))
 
   (it "forwards a cancel notification to the remote WS without waiting for the prompt response"

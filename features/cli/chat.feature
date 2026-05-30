@@ -6,6 +6,7 @@ Feature: Chat Command
 
   Background:
     Given an in-memory Isaac state directory "target/test-state"
+    And the ACP commands are registered
 
   Scenario: chat launches Toad by default
     Given the command "toad" is available

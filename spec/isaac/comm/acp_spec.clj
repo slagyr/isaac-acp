@@ -114,7 +114,7 @@
         (should= "agent:main:acp:direct:user1" (get-in (first notifications) [:params :sessionId]))
         (should= "agent:main:acp:direct:user1" (get-in (second notifications) [:params :sessionId]))
         (should= "pending" (get-in (first notifications) [:params :update :status]))
-        (should= "completed" (get-in (second notifications) [:params :update :status]))))
+        (should= "completed" (get-in (second notifications) [:params :update :status])))))
 
   (it "writes cancelled tool notifications with sessionId"
     (let [writer    (StringWriter.)
@@ -149,5 +149,14 @@
       (should= ["status" "model" "crew" "cwd" "effort" "alpha" "zebra"]
                (mapv :name (get-in notification [:params :update :availableCommands])))))
 
-  )
+  (it "maps command params into ACP input hints"
+    (let [notification (sut/available-commands-update "cmd-test"
+                                                       [{:name        "work"
+                                                         :description "Start work on a ready bean"
+                                                         :params      ["bean"]}])]
+      (should= [{:name        "work"
+                 :description "Start work on a ready bean"
+                 :input       {:hint "bean"}}]
+               (get-in notification [:params :update :availableCommands]))))
+
   )

@@ -5,25 +5,39 @@
     [isaac.charge :as charge]
     [isaac.comm.acp :as acp-comm]
     [isaac.config.loader :as config]
+    [isaac.fs :as fs]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.jsonrpc.dispatch :as dispatch]
     [isaac.drive.turn :as single-turn]
     [isaac.llm.api :as llm-api]
     [isaac.logger :as log]
+    [isaac.prompt.catalog :as prompt-catalog]
+    [isaac.server.routes]
     [isaac.session.store :as store]
-    [isaac.session.store.file :as file-store]
     [isaac.session.transcript :as message-content]
     [isaac.slash.registry :as slash-registry]
     [isaac.system :as system]))
 
 (defn- available-commands []
-  (slash-registry/all-commands (:module-index (or (config/snapshot) {}))))
+  ;; Registered commands (built-ins + module-declared) come from slash-registry;
+  ;; config-defined prompt-template commands (<state-dir>/config/commands/*.md)
+  ;; are no longer surfaced by slash-registry/all-commands — they're discovered
+  ;; by prompt-catalog at runtime, so we merge both sources here.
+  (let [cfg       (or (config/snapshot "ACP available command advertisement") {})
+        state-dir (or (:state-dir cfg) (system/get :state-dir))
+        catalog   (prompt-catalog/resolve-catalog {:config    cfg
+                                                   :cwd       (System/getProperty "user.dir")
+                                                   :fs        (fs/instance)
+                                                   :state-dir state-dir})]
+    (concat (slash-registry/all-commands (:module-index cfg))
+            (vals (:commands catalog)))))
 
 (def ^:private startup-cwd (System/getProperty "user.dir"))
 
 (defn- session-store []
   (or (system/get :session-store)
-      (file-store/create-store (system/get :state-dir))))
+      (store/registered-store)
+      (store/create (system/get :state-dir))))
 
 (defn- with-startup-cwd [f]
   (let [original (System/getProperty "user.dir")]
@@ -211,12 +225,12 @@
         session-entry (when session-id (store/get-session (session-store) session-id))
         crew-members  (resolve-crew-members crew-members cfg)
         effective-cfg (effective-cfg cfg crew-members (or models {}) (or provider-configs {}))
-        _             (config/set-snapshot! effective-cfg)]
+        _             (config/set-snapshot! effective-cfg "ACP session/prompt effective config")]
     (when (nil? session-id)
       (throw (invalid-params "sessionId is required")))
     (when (nil? text)
       (throw (invalid-params "Invalid params: no text in prompt")))
-    (run-prompt output-writer session-id text {:cfg            effective-cfg
+    (run-prompt output-writer session-id text {:config         effective-cfg
                                                :home           home
                                                :model-override model-override
                                                :crew           (or (:crew session-entry) (:agent session-entry))})))

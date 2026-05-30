@@ -107,7 +107,7 @@
                                                   {:sessionId "agent:main:acp:direct:user1"
                                                    :prompt    [{:type "text" :text "Hello"}]}
                                                   nil))
-          (should= {:cfg            {:defaults {}
+          (should= {:config         {:defaults {}
                                      :crew {"main" {:soul "You are Isaac."}}
                                      :models {}
                                      :providers {}
@@ -331,7 +331,7 @@
             captured-cfg  (atom nil)
             response      (with-redefs [single-turn/run-turn!
                                         (fn [_charge]
-                                          (reset! captured-cfg (config/snapshot))
+                                          (reset! captured-cfg (config/snapshot "ACP server-spec captured cfg"))
                                           {})]
                             (sut/dispatch-line {:state-dir     test-dir
                                                 :cfg           cfg
@@ -351,8 +351,9 @@
       (let [codex-agents {"main" {:name "main" :soul "Lives in a trash can." :model "snuffy" :tools {:allow ["read"]}}}
             codex-models {"snuffy" {:alias "snuffy" :model "snuffy-codex" :provider (str marigold/grover-api ":" marigold/quantum-anvil) :context-window 128000}}
             lid-file     (str test-dir "/trash-lid.txt")]
-        (fs/mkdirs lid-file)
-        (fs/spit lid-file "Old newspaper and a banana peel.")
+        (let [fs* (system/get :fs)]
+          (fs/mkdirs fs* test-dir)
+          (fs/spit fs* lid-file "Old newspaper and a banana peel."))
         (grover/enqueue! [{:model "snuffy-codex" :tool_call "read" :arguments {:filePath lid-file}}
                           {:model "snuffy-codex" :type "text" :content "Old newspaper and a banana peel."}])
         (let [writer        (StringWriter.)
@@ -423,7 +424,7 @@
             text           (-> text-updates first (get-in [:params :update :content :text]))]
         (should= "end_turn" (get-in response [:result :stopReason]))
         (should= 1 (count text-updates))
-        (should= "unknown crew on session agent:main:acp:direct:user1: marvin\npass --crew to override" text)))
+        (should= "unknown crew on session agent:main:acp:direct:user1: marvin\nsend /crew <name> to change crew" text)))
 
     (it "emits a no-model error when the default crew is implicit in config"
       (helper/create-session! test-dir "user1")
@@ -600,6 +601,39 @@
                                                      {:sessionId "agent:main:acp:direct:user1"}))
           (deliver release true)
           (should= "cancelled" (get-in (deref prompt 1000 nil) [:result :stopReason])))))
+
+    (it "emits a cancelled tool_call_update when session/cancel interrupts an in-flight exec tool"
+      (marigold/with-real-manifest
+        (helper/create-session! test-dir "agent:main:acp:direct:user1")
+        (builtin/register-all!)
+        (grover/enqueue! [{:tool_call "exec" :arguments {:command "sleep 30"}}])
+        (let [writer      (StringWriter.)
+              exec-agents {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec"]}}}
+              started     (promise)
+              release     (promise)
+              prompt      (future
+                            (with-redefs [exec/exec-tool
+                                          (fn [{:keys [session-key]}]
+                                            (deliver started true)
+                                            @release
+                                            (if (bridge/cancelled? session-key)
+                                              {:error :cancelled}
+                                              {:result "done"}))]
+                              (sut/dispatch-line (assoc prompt-opts :crew-members exec-agents :output-writer writer)
+                                                 (jrpc/request-line 33 "session/prompt"
+                                                                    {:sessionId "agent:main:acp:direct:user1"
+                                                                     :prompt [{:type "text" :text "run it"}]}))))]
+          (should= true (deref started 1000 nil))
+          (sut/dispatch-line prompt-opts
+                             (jrpc/notification-line "session/cancel"
+                                                     {:sessionId "agent:main:acp:direct:user1"}))
+          (deliver release true)
+          (should= "cancelled" (get-in (deref prompt 1000 nil) [:result :stopReason]))
+          (let [notifications (parsed-output writer)
+                statuses      (map #(select-keys (get-in % [:params :update]) [:sessionUpdate :status])
+                                   notifications)]
+            (should-contain {:sessionUpdate "tool_call" :status "pending"} statuses)
+            (should-contain {:sessionUpdate "tool_call_update" :status "cancelled"} statuses)))))
 
     (it "appends exactly one error entry when run-turn! throws an uncaught exception"
       (helper/create-session! test-dir "agent:main:acp:direct:user1")

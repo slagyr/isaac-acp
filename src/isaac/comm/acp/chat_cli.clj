@@ -3,6 +3,7 @@
     [clojure.string :as str]
     [clojure.tools.cli :as tools-cli]
     [isaac.cli :as registry]
+    [isaac.config.paths :as paths]
     [isaac.config.loader :as config]
     [isaac.util.shell :as shell]))
 
@@ -58,8 +59,13 @@
 (defn- home-dir [{:keys [home state-dir]}]
   (or home state-dir (System/getProperty "user.home")))
 
+(defn- state-dir [opts]
+  (or (:state-dir opts)
+      (some-> (:home opts) paths/default-state-dir)
+      (paths/default-state-dir (home-dir opts))))
+
 (defn- missing-local-config? [opts]
-  (let [result (config/load-config-result {:home (home-dir opts)})]
+  (let [result (config/load-config-result {:state-dir (state-dir opts)})]
     (when (:missing-config? result)
       (print-error! (get-in result [:errors 0 :value]))
       true)))

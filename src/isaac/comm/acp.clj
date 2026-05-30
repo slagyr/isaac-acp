@@ -25,6 +25,14 @@
                                       :content       {:type "text"
                                                       :text text}}))
 
+(defn- command-input [command]
+  (when-let [hint (some-> (:params command) first str not-empty)]
+    {:hint hint}))
+
+(defn- advertised-command [command]
+  (cond-> (select-keys command [:description :name])
+    (command-input command) (assoc :input (command-input command))))
+
 (defn- available-commands-notification [session-id commands]
   (let [built-in-order {"status" 0
                         "model"  1
@@ -35,7 +43,9 @@
                         (if-let [idx (get built-in-order (:name command))]
                           [0 idx (:name command)]
                           [1 0 (:name command)]))
-        commands      (sort-by rank commands)]
+        commands      (->> commands
+                           (sort-by rank)
+                           (map advertised-command))]
   (jsonrpc/session-update session-id {:sessionUpdate     "available_commands_update"
                                       :availableCommands commands})))
 

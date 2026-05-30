@@ -6,7 +6,6 @@
     [isaac.fs :as fs]
     [isaac.logger :as log]
     [isaac.session.store :as store]
-    [isaac.session.store.file :as file-store]
     [isaac.system :as system]
     [isaac.util.jsonrpc.dispatch :as dispatch]
     [org.httpkit.server :as httpkit]
@@ -46,15 +45,18 @@
 
 (defn- requested-session-key [{:keys [query-params crew-id]}]
   (let [state-dir         (system/get :state-dir)
+        session-store     (or (system/get :session-store)
+                              (store/registered-store)
+                              (when state-dir (store/create state-dir)))
         requested-session (get query-params "session")]
     (cond
       requested-session
-      (if (store/get-session (or (system/get :session-store) (file-store/create-store state-dir)) requested-session)
+      (if (store/get-session session-store requested-session)
         requested-session
         ::missing-session)
 
       (and state-dir (= "true" (get query-params "resume")))
-      (some->> (store/list-sessions-by-agent (or (system/get :session-store) (file-store/create-store state-dir)) (or crew-id "main"))
+      (some->> (store/list-sessions-by-agent session-store (or crew-id "main"))
                (sort-by :updated-at)
                last
                :id)
@@ -156,7 +158,7 @@
       (task))))
 
 (defn handler [request]
-  (let [opts     {:cfg          (config/snapshot)
+  (let [opts     {:cfg          (config/snapshot "ACP websocket handler entry")
                   :query-params (query-params request)
                   :state-dir    (system/get :state-dir)}
         cfg-opts opts]

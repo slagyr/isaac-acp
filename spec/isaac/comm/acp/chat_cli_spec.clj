@@ -4,6 +4,7 @@
     [clojure.java.io :as io]
     [isaac.cli :as registry]
     [isaac.comm.acp.chat-cli :as sut]
+    [isaac.bridge.core :as bridge]
     [isaac.comm :as comm]
     [isaac.config.loader :as config]
     [isaac.drive.dispatch :as dispatch]
@@ -17,12 +18,15 @@
     [isaac.llm.tool-loop :as tool-loop]
     [isaac.logger :as log]
     [isaac.session.store :as store]
-    [isaac.session.store.file :as file-store]
     [isaac.session.compaction :as compaction]
     [isaac.spec-helper :as storage]
+    isaac.server.routes
+    isaac.slash.registry
     [isaac.tool.registry :as tool-registry]
     [isaac.util.shell :as shell]
     [isaac.fs :as fs]
+    [isaac.home :as home]
+    [isaac.main :as main]
     [isaac.system :as system]
     [speclj.core :refer :all]))
 
@@ -35,14 +39,21 @@
         (.delete f)))))
 
 (defn- write-config! [home data]
-  (let [path (str home "/.isaac/config/isaac.edn")]
-    (fs/mkdirs (fs/parent path))
-    (fs/spit path (pr-str data))))
+  (let [path (str home "/.isaac/config/isaac.edn")
+        fs*  (system/get :fs)]
+    (fs/mkdirs fs* (fs/parent path))
+    (fs/spit fs* path (pr-str data))))
+
+(defn- dispatch-turn! [session-key input opts]
+  (bridge/dispatch! (merge {:origin      {:kind :cli}
+                            :session-key session-key
+                            :input       input}
+                           opts)))
 
 (describe "CLI Chat"
 
   (after (single-turn/clear-async-compactions!))
-  (around [it] (storage/with-memory-store (system/with-system {:state-dir test-dir} (binding [fs/*fs* (fs/mem-fs)] (it)))))
+  (around [it] (storage/with-memory-store (system/with-system {:state-dir test-dir :fs (fs/mem-fs)} (it))))
 
   (describe "run"
 
@@ -52,7 +63,35 @@
           (with-out-str
             (should= 1 (sut/run {:home "/test/chat-no-config" :dry-run true}))))
         (should-contain "no config found" (str err))
-        (should-contain "/test/chat-no-config/.isaac/config/isaac.edn" (str err))))
+        (should-contain "config/isaac.edn" (str err))))
+
+    (it "fails clearly when no config exists via main/run"
+      (let [home-dir "/tmp/chat-main-no-config"
+            err      (java.io.StringWriter.)]
+        (clean-dir! home-dir)
+        (registry/register! (sut/make-command))
+        (binding [*err* err
+                  *out* (java.io.StringWriter.)
+                  home/*user-home* home-dir
+                  main/*extra-opts* {:home home-dir}]
+          (should= 1 (main/run ["chat" "--dry-run"])))
+        (should-contain "no config found" (str err))
+        (should-contain "config/isaac.edn" (str err))))
+
+    (it "fails clearly when no config exists via main/run with an unrelated in-memory state"
+      (let [home-dir  "/test/chat-no-config-home"
+            state-dir "/test/chat-seeded/.isaac"
+            err       (java.io.StringWriter.)]
+        (system/with-nested-system {:fs (fs/mem-fs)}
+          (write-config! "/test/chat-seeded" {})
+          (registry/register! (sut/make-command))
+          (binding [*err* err
+                    *out* (java.io.StringWriter.)
+                    home/*user-home* home-dir
+                    main/*extra-opts* {:home home-dir :fs (system/get :fs)}]
+            (should= 1 (main/run ["chat" "--dry-run"]))))
+        (should-contain "no config found" (str err))
+        (should-contain "config/isaac.edn" (str err))))
 
     (it "launches Toad by default"
       (let [captured (atom nil)]
@@ -164,11 +203,11 @@
       (let [messages (atom [])
             recorder (reify store/SessionStore
                        (append-message! [_ _ message] (swap! messages conj message)))]
-        (with-redefs [file-store/create-store (fn [& _] recorder)]
-          (single-turn/run-tool-calls! "agent:main:cli:direct:toolerr"
-                                [[{:id "tc-1" :name "boom" :type "toolCall" :arguments {}}
-                                  "Error: something went wrong"]])
-          (should= true (:isError (second @messages))))))
+        (single-turn/run-tool-calls! {:session-store recorder}
+                                     "agent:main:cli:direct:toolerr"
+                                     [[{:id "tc-1" :name "boom" :type "toolCall" :arguments {}}
+                                       "Error: something went wrong"]])
+        (should= true (:isError (second @messages)))))
 
     )
 
@@ -177,29 +216,51 @@
     (storage/with-captured-logs)
 
     (it "dispatches chat-completions errors and logs them"
-      (with-redefs [chat-completions/chat (fn [_ _] {:error :auth-failed :status 401})]
-        (let [result (dispatch/dispatch-chat (llm-provider/make-provider "openai" {:api "chat-completions"}) {:model "m" :messages []})]
-          (should= :auth-failed (:error result))
-          (should= [:chat/request :chat/error] (mapv :event @log/captured-logs))))))
+      (let [provider (reify api/Api
+                       (chat [_ _] {:error :auth-failed :status 401})
+                       (chat-stream [_ _ _] (throw (ex-info "unused" {})))
+                       (followup-messages [_ _ _ _ _] (throw (ex-info "unused" {})))
+                       (config [_] {})
+                       (display-name [_] "openai")
+                       (build-prompt [_ _] (throw (ex-info "unused" {})))
+                       (format-tools [_ _] nil))
+            result   (dispatch/dispatch-chat provider {:model "m" :messages []})]
+        (should= :auth-failed (:error result))
+        (should= [:chat/request :chat/error] (mapv :event @log/captured-logs)))))
 
   (describe "dispatch-chat-stream"
 
     (storage/with-captured-logs)
 
     (it "dispatches ollama stream requests and logs success"
-      (let [chunks (atom [])]
-        (with-redefs [ollama/chat-stream (fn [_ on-chunk _]
-                                           (on-chunk {:message {:content "hi"}})
-                                           {:model "qwen" :message {:role "assistant" :content "hi"}})]
-          (let [result (dispatch/dispatch-chat-stream (llm-provider/make-provider "ollama" {}) {:model "m" :messages []}
-                                                 #(swap! chunks conj %))]
-            (should= "qwen" (:model result))
-            (should= 1 (count @chunks))
-            (should= [:chat/stream-request :chat/stream-response] (mapv :event @log/captured-logs))))))
+      (let [chunks   (atom [])
+            provider (reify api/Api
+                       (chat [_ _] (throw (ex-info "unused" {})))
+                       (chat-stream [_ _ on-chunk]
+                         (on-chunk {:message {:content "hi"}})
+                         {:model "qwen" :message {:role "assistant" :content "hi"}})
+                       (followup-messages [_ _ _ _ _] (throw (ex-info "unused" {})))
+                       (config [_] {})
+                       (display-name [_] "ollama")
+                       (build-prompt [_ _] (throw (ex-info "unused" {})))
+                       (format-tools [_ _] nil))]
+        (let [result (dispatch/dispatch-chat-stream provider {:model "m" :messages []}
+                                               #(swap! chunks conj %))]
+          (should= "qwen" (:model result))
+          (should= 1 (count @chunks))
+          (should= [:chat/stream-request :chat/stream-response] (mapv :event @log/captured-logs))))))
 
     (it "dispatches anthropic stream errors and logs them"
-      (with-redefs [anthropic/chat-stream (fn [_ _ _] {:error :connection-refused})]
-        (let [result (dispatch/dispatch-chat-stream (llm-provider/make-provider "anthropic" {:api "messages"}) {:model "m" :messages []} identity)]
+      (log/capture-logs
+        (let [provider (reify api/Api
+                         (chat [_ _] (throw (ex-info "unused" {})))
+                         (chat-stream [_ _ _] {:error :connection-refused})
+                         (followup-messages [_ _ _ _ _] (throw (ex-info "unused" {})))
+                         (config [_] {})
+                         (display-name [_] "anthropic")
+                         (build-prompt [_ _] (throw (ex-info "unused" {})))
+                         (format-tools [_ _] nil))
+              result   (dispatch/dispatch-chat-stream provider {:model "m" :messages []} identity)]
           (should= :connection-refused (:error result))
           (should= [:chat/stream-request :chat/stream-error] (mapv :event @log/captured-logs))))))
 
@@ -235,7 +296,7 @@
 
   (describe "process-response!"
 
-    (around [it] (binding [fs/*fs* (fs/mem-fs)] (it)))
+    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
     (storage/with-captured-logs)
 
     (it "appends assistant message and updates tokens on success"
@@ -373,6 +434,7 @@
 
   (describe "check-compaction!"
 
+    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
     (storage/with-captured-logs)
 
     (it "does not compact when under context window"
@@ -404,11 +466,11 @@
                             (get-session [_ key-str]
                               (when (= key-str "agent:main:cli:direct:target")
                                 {:key "agent:main:cli:direct:target" :context-window 2})))]
-        (with-redefs [file-store/create-store (fn [& _] store-stub)
-                      compaction/should-compact?  (fn [entry _]
+        (with-redefs [compaction/should-compact?  (fn [entry _]
                                              (reset! checked-entry entry)
                                              false)]
-          (single-turn/check-compaction! "agent:main:cli:direct:target"
+          (single-turn/check-compaction! {:session-store store-stub}
+                                 "agent:main:cli:direct:target"
                                  {:model "m" :soul "s" :context-window 32768
                                   :provider (llm-provider/make-provider "ollama" {})})
           (should= "agent:main:cli:direct:target" (:key @checked-entry)))))
@@ -682,6 +744,8 @@
 
   (describe "stream-response!"
 
+    (around [it] (system/with-nested-system {:fs (fs/mem-fs)} (it)))
+
     (it "accumulates streamed content and returns result"
       (with-redefs [dispatch/dispatch-chat-stream (fn [_ _ on-chunk]
                                                (on-chunk {:message {:content "Hello"}})
@@ -736,7 +800,7 @@
 
   (describe "active-tools (via run-turn!)"
 
-    (around [it] (binding [fs/*fs* (fs/mem-fs)] (it)))
+    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
 
     (it "streams even when tools are registered"
       (let [key-str       "agent:main:cli:direct:grover-tools"
@@ -745,20 +809,20 @@
              tools-called  (atom false)
              stream-called (atom false)]
         (with-redefs [single-turn/check-compaction!        (fn [& _] nil)
-                      config/snapshot                      (fn [] {:crew {"main" {:tools {:allow [:echo]}}}})
-                      dispatch/dispatch-chat-with-tools     (fn [_ _ _]
-                                                              (reset! tools-called true)
-                                                              {:response {:message {:role "assistant" :content "done"}}})
+                      config/snapshot                      (fn [& _] {:crew {"main" {:tools {:allow [:echo]}}}})
+                      tool-loop/run                        (fn [chat-fn _ request _ & _]
+                                                              (chat-fn request))
                       dispatch/dispatch-chat-stream         (fn [_ _ on-chunk]
                                                               (reset! stream-called true)
                                                               (on-chunk {:message {:content "done"} :done true})
                                                               {:message {:role "assistant" :content "done"}})]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "hi"
-                                        {:model "test-model"
-                                         :soul "You are helpful."
-                                         :provider (llm-provider/make-provider "grover" {})
-                                         :context-window 32768})))
+            (dispatch-turn! key-str "hi"
+                            {:config {:crew {"main" {:tools {:allow [:echo]}}}}
+                             :model "test-model"
+                             :soul "You are helpful."
+                             :provider (llm-provider/make-provider "grover" {})
+                             :context-window 32768})))
         (should= false @tools-called)
         (should= true @stream-called)))
 
@@ -767,12 +831,14 @@
             _                (storage/create-session! test-dir key-str)
             captured-request (atom nil)]
         (with-redefs [single-turn/check-compaction!         (fn [& _] nil)
-                      config/snapshot                      (fn [] {:crew {"main" {:tools {:allow [:read :write]}}}})
+                      config/snapshot                      (fn [& _] {:crew {"main" {:tools {:allow [:read :write]}}}})
+                      tool-loop/run                        (fn [chat-fn _ request _ & _]
+                                                              (chat-fn request))
                       tool-registry/tool-definitions        (fn
                                                                ([] [{:name "read" :description "Read" :parameters {}}
                                                                     {:name "write" :description "Write" :parameters {}}
                                                                     {:name "exec" :description "Exec" :parameters {}}])
-                                                               ([allowed]
+                                                               ([allowed & _]
                                                                 (->> [{:name "read" :description "Read" :parameters {}}
                                                                       {:name "write" :description "Write" :parameters {}}
                                                                       {:name "exec" :description "Exec" :parameters {}}]
@@ -780,56 +846,65 @@
                                                                      vec)))
                       tool-registry/tool-fn                 (fn
                                                                ([] (fn [_ _] nil))
-                                                               ([_] (fn [_ _] nil)))
+                                                               ([_] (fn [_ _] nil))
+                                                               ([_ _ _ & _] (fn [_ _] nil)))
                       dispatch/dispatch-chat-stream         (fn [_ request _]
                                                               (reset! captured-request request)
                                                               {:message {:role "assistant" :content "summary"}})]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "summarize the readme"
-                                                {:model "qwen"
-                                                 :soul "You are helpful."
-                                                 :provider (llm-provider/make-provider "ollama" {})
-                                                 :context-window 32768})))
+            (dispatch-turn! key-str "summarize the readme"
+                            {:config {:crew {"main" {:tools {:allow [:read :write]}}}}
+                             :model "qwen"
+                             :soul "You are helpful."
+                             :provider (llm-provider/make-provider "ollama" {})
+                             :context-window 32768})))
         (should= ["read" "write"] (mapv #(or (:name %) (get-in % [:function :name])) (:tools @captured-request)))))
 
     (it "omits tools when the crew member has an empty tools allow list"
       (let [key-str       "agent:main:cli:direct:no-tools"
             _             (storage/create-session! test-dir key-str)
-            tools-called  (atom false)
-            chat-called   (atom false)]
+            captured-request (atom nil)]
         (with-redefs [single-turn/check-compaction!         (fn [& _] nil)
-                      config/snapshot                      (fn [] {:crew {"main" {:tools {:allow []}}}})
-                      dispatch/dispatch-chat-with-tools      (fn [& _]
-                                                               (reset! tools-called true)
-                                                               {:response {:message {:role "assistant" :content "done"}}})
-                      dispatch/dispatch-chat                 (fn [_ _]
-                                                               (reset! chat-called true)
+                      config/snapshot                      (fn [& _] {:crew {"main" {:tools {:allow []}}}})
+                      tool-loop/run                        (fn [chat-fn _ request _ & _]
+                                                              (chat-fn request))
+                      dispatch/dispatch-chat                 (fn [_ request]
+                                                               (reset! captured-request request)
                                                                {:message {:role "assistant" :content "done"}})]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "hi"
-                                                {:model "test-model"
-                                                 :soul "You are helpful."
-                                                 :provider (llm-provider/make-provider "grover" {})
-                                                 :context-window 32768})))
-        (should= false @tools-called)
-        (should= true @chat-called))))
+            (dispatch-turn! key-str "hi"
+                            {:config {:crew {"main" {:tools {:allow []}}}}
+                             :model "test-model"
+                             :soul "You are helpful."
+                             :provider (llm-provider/make-provider "grover" {})
+                             :context-window 32768})))
+        (should-be-nil (:tools @captured-request)))))
 
   (describe "dispatch-chat-with-tools"
 
     (it "drives the tool loop using the provider's chat and followup-messages"
-      (with-redefs [ollama/chat (fn [_ _]
-                                  {:message {:role "assistant" :content "done"} :model "echo"})]
-        (let [tool-fn (fn [_ _] "tool result")
-              result  (dispatch/dispatch-chat-with-tools (llm-provider/make-provider "ollama" {}) {:model "echo" :messages []} tool-fn)]
-          (should-not (:error result))
-          (should= [] (:tool-calls result))))))
+      (let [provider (reify api/Api
+                       (chat [_ _] {:message {:role "assistant" :content "done"} :model "echo"})
+                       (chat-stream [_ _ _] (throw (ex-info "unused" {})))
+                       (followup-messages [_ _ _ _ _] [])
+                       (config [_] {})
+                       (display-name [_] "ollama")
+                       (build-prompt [_ _] (throw (ex-info "unused" {})))
+                       (format-tools [_ _] nil))
+            tool-fn  (fn [_ _] "tool result")
+            result   (dispatch/dispatch-chat-with-tools provider {:model "echo" :messages []} tool-fn)]
+        (should-not (:error result))
+        (should= [] (:tool-calls result)))))
 
   (describe "run-turn!"
 
+    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
     (it "sends a cancelled tool update when a tool call is interrupted"
       (let [real-dir  (str (System/getProperty "user.dir") "/target/test-chat-cancel")
             key-str   "agent:main:cli:direct:cancel-tool"
             _         (storage/create-session! real-dir key-str)
+            fs*       (system/get :fs)
+            store*    (store/registered-store)
             started*  (promise)
             release*  (promise)
             events    (atom [])
@@ -847,11 +922,13 @@
                           (on-compaction-failure [_ _ _] nil)
                           (on-compaction-disabled [_ _ _] nil)
                           (on-turn-end [_ _ _] nil))]
-        (with-redefs [config/snapshot (fn [] {:crew {"main" {:tools {:allow [:sleepy]}}}})
+        (with-redefs [config/snapshot (fn [& _] {:crew {"main" {:tools {:allow [:sleepy]}}}})
                       tool-loop/run   (fn [_chat-fn _followup-fn _request tool-fn & _]
                                         (tool-fn "sleepy" {:command "sleep 30"}))]
           (let [turn (future
-                       (system/with-system {:state-dir real-dir}
+                       (system/with-system {:state-dir real-dir
+                                            :fs        fs*
+                                            :sessions  {:store store*}}
                          (tool-registry/register! {:name        "sleepy"
                                                    :description "waits until cancelled"
                                                    :parameters  {}
@@ -859,12 +936,12 @@
                                                                   (deliver started* :started)
                                                                   @release*
                                                                   {:error :cancelled})})
-                         (single-turn/run-turn! key-str "run it"
-                                                {:comm            ch
-                                                 :model           "echo"
-                                                 :soul            "You are helpful."
-                                                 :provider (llm-provider/make-provider "grover" {})
-                                                 :context-window  32768})))]
+                         (dispatch-turn! key-str "run it"
+                                         {:comm            ch
+                                          :model           "echo"
+                                          :soul            "You are helpful."
+                                          :provider        (llm-provider/make-provider "grover" {})
+                                          :context-window  32768})))]
             @started*
             (isaac.bridge.cancellation/cancel! key-str)
             (deliver release* :released)
@@ -877,7 +954,7 @@
 
   (describe "run-tool-calls!"
 
-    (around [it] (binding [fs/*fs* (fs/mem-fs)] (it)))
+    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
 
     (it "stores tool calls and results in the transcript"
       (let [key-str "agent:main:cli:direct:tooltest"
@@ -916,6 +993,7 @@
 
   (describe "run-turn!"
 
+    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
     (it "includes tools in the streaming request when tools are available"
       (let [key-str          "agent:main:cli:direct:tool-user"
              _                (storage/create-session! test-dir key-str)
@@ -926,16 +1004,17 @@
                                                         ([_] [{:name "read" :description "Read a file" :parameters {}}]))
                       tool-registry/tool-fn          (fn
                                                         ([] (fn [_ _] "README"))
-                                                        ([_] (fn [_ _] "README")))
+                                                        ([_] (fn [_ _] "README"))
+                                                        ([_ _ _] (fn [_ _] "README")))
                       dispatch/dispatch-chat-stream  (fn [_ request _]
                                                        (reset! captured-request request)
                                                        {:message {:role "assistant" :content "summary"}})]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "summarize the readme"
-                                        {:model "qwen"
-                                         :soul "You are helpful."
-                                         :provider (llm-provider/make-provider "ollama" {})
-                                         :context-window 32768})))
+            (dispatch-turn! key-str "summarize the readme"
+                            {:model "qwen"
+                             :soul "You are helpful."
+                             :provider (llm-provider/make-provider "ollama" {})
+                             :context-window 32768})))
         (should= 1 (count (:tools @captured-request)))))
 
     (it "preserves the triggering user message after compaction and completes chat"
@@ -954,11 +1033,11 @@
                                                         :usage   {:input-tokens 10 :output-tokens 5}
                                                         :model   (:model request)})]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "Can you summarize README.md?"
-                                        {:model "test-model"
-                                         :soul "You are Isaac."
-                                         :provider (llm-provider/make-provider "grover" {})
-                                         :context-window 100})))
+            (dispatch-turn! key-str "Can you summarize README.md?"
+                            {:model "test-model"
+                             :soul "You are Isaac."
+                             :provider (llm-provider/make-provider "grover" {})
+                             :context-window 100})))
         (let [transcript (storage/get-transcript test-dir key-str)]
           (should= "compaction" (:type (nth transcript 2)))
           (should= "user" (get-in (nth transcript 3) [:message :role]))
@@ -988,11 +1067,11 @@
                                                                                  :input_tokens_details  {:cached_tokens 7}}}
                                                           :usage    {:input-tokens 100 :output-tokens 50}})]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "knock knock"
-                                        {:model "gpt-5.4"
-                                         :soul "Lives in a trash can."
-                                         :provider (llm-provider/make-provider "chatgpt" provider-cfg)
-                                         :context-window 128000})))
+            (dispatch-turn! key-str "knock knock"
+                            {:model "gpt-5.4"
+                             :soul "Lives in a trash can."
+                             :provider (llm-provider/make-provider "chatgpt" provider-cfg)
+                             :context-window 128000})))
         (let [transcript (storage/get-transcript test-dir key-str)
               assistant  (last (filter #(= "assistant" (get-in % [:message :role])) transcript))]
           (should= "Scram!" (get-in assistant [:message :content]))
@@ -1013,8 +1092,8 @@
                       tool-registry/tool-definitions (constantly nil)
                       dispatch/dispatch-chat         (fn [& _] {:error :connection-refused :message "refused"})]
           (with-out-str
-            (reset! result (@#'single-turn/run-turn! key-str "hello"
-                                                         {:model "test" :soul "." :provider (llm-provider/make-provider "ollama" {}) :context-window 32768}))))
+            (reset! result (dispatch-turn! key-str "hello"
+                                           {:model "test" :soul "." :provider (llm-provider/make-provider "ollama" {}) :context-window 32768}))))
         (should= :connection-refused (:error @result))))
 
     (it "passes the session state directory through provider config"
@@ -1037,11 +1116,12 @@
                                                          :usage   {:input-tokens 2 :output-tokens 1}
                                                          :model   "echo"})]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "hello"
-                                        {:model "echo"
-                                         :soul "You are Isaac."
-                                         :provider (llm-provider/make-provider "chatgpt" provider-cfg)
-                                         :context-window 32768})))
+            (dispatch-turn! key-str "hello"
+                            {:config {:state-dir test-dir}
+                             :model "echo"
+                             :soul "You are Isaac."
+                             :provider (llm-provider/make-provider "chatgpt" provider-cfg)
+                             :context-window 32768})))
         (should= test-dir (:state-dir @captured-provider-cfg))))
 
     (it "rejects a turn when the session crew is unknown"
@@ -1052,20 +1132,21 @@
             stream-called (atom false)]
         (log/capture-logs
           (with-redefs [compaction/should-compact? (constantly false)
-                        config/snapshot     (fn [] {:crew {"main" {:model "grover" :soul "You are Isaac."}}
+                        config/snapshot     (fn [& _] {:crew {"main" {:model "grover" :soul "You are Isaac."}}
                                                     :models {"grover" {:model "echo" :provider "grover" :context-window 32768}}})
                         tool-loop/run       (fn [& _]
                                               (reset! stream-called true)
                                               {:response {:message {:content "should not happen"}}})]
             (reset! output (with-out-str
-                             (reset! result (@#'single-turn/run-turn! key-str "hello"
-                                                             {:model "echo"
-                                                              :soul "You are Isaac."
-                                                              :provider (llm-provider/make-provider "grover" {})
-                                                              :context-window 32768}))))))
+                             (reset! result (dispatch-turn! key-str "hello"
+                                                            {:model "echo"
+                                                             :soul "You are Isaac."
+                                                             :provider (llm-provider/make-provider "grover" {})
+                                                             :context-window 32768}))))))
         (should= :unknown-crew (:error @result))
-        (should-contain "unknown crew: marvin" @output)
-        (should-contain "use /crew {name} to switch, or add marvin to config" @output)
+        (should-contain "unknown crew on session" (:message @result))
+        (should-contain "marvin" (:message @result))
+        (should-contain "pass --crew to override" (:message @result))
         (should-not @stream-called)
         (should= [] (filter #(= "message" (:type %)) (storage/get-transcript test-dir key-str)))
         (let [entry (last @log/captured-logs)]
@@ -1085,11 +1166,11 @@
                                                                      :usage   {:input-tokens 2 :output-tokens 1}
                                                                      :model   "echo"}})]
             (with-out-str
-              (@#'single-turn/run-turn! key-str "hello"
-                                          {:model "echo"
-                                           :soul "You are Isaac."
-                                           :provider (llm-provider/make-provider "grover" {})
-                                           :context-window 32768})))
+              (dispatch-turn! key-str "hello"
+                              {:model "echo"
+                               :soul "You are Isaac."
+                               :provider (llm-provider/make-provider "grover" {})
+                               :context-window 32768})))
           (should (some #(and (= :drive/turn-accepted (:event %))
                               (= key-str (:session %))
                               (= "main" (:crew %)))
@@ -1106,7 +1187,8 @@
                                                        ([_] [{:name "read_file" :description "Read" :parameters {}}]))
                       tool-registry/tool-fn          (fn
                                                         ([] (fn [_ _] "contents"))
-                                                        ([_] (fn [_ _] "contents")))
+                                                        ([_] (fn [_ _] "contents"))
+                                                        ([_ _ _] (fn [_ _] "contents")))
                       dispatch/dispatch-chat-stream  (fn [_ _ on-chunk]
                                                        (swap! call-count inc)
                                                        (let [chunk (if (= 1 @call-count)
@@ -1119,8 +1201,8 @@
                                                          (on-chunk chunk)
                                                          chunk))]
           (reset! output (with-out-str
-                           (@#'single-turn/run-turn! key-str "read it"
-                                                        {:model "llama3" :soul "." :provider (llm-provider/make-provider "ollama" {}) :context-window 32768}))))
+                           (dispatch-turn! key-str "read it"
+                                           {:model "llama3" :soul "." :provider (llm-provider/make-provider "ollama" {}) :context-window 32768}))))
         (should-contain "[tool call: read_file]" @output)))
 
     (it "prints response content to stdout after tool calls complete"
@@ -1134,7 +1216,8 @@
                                                        ([_] [{:name "read_file" :description "Read" :parameters {}}]))
                       tool-registry/tool-fn          (fn
                                                         ([] (fn [_ _] "contents"))
-                                                        ([_] (fn [_ _] "contents")))
+                                                        ([_] (fn [_ _] "contents"))
+                                                        ([_ _ _] (fn [_ _] "contents")))
                       dispatch/dispatch-chat-stream  (fn [_ _ on-chunk]
                                                        (swap! call-count inc)
                                                        (let [chunk (if (= 1 @call-count)
@@ -1147,8 +1230,8 @@
                                                          (on-chunk chunk)
                                                          chunk))]
           (reset! output (with-out-str
-                            (@#'single-turn/run-turn! key-str "read it"
-                                                         {:model "llama3" :soul "." :provider (llm-provider/make-provider "ollama" {}) :context-window 32768}))))
+                            (dispatch-turn! key-str "read it"
+                                            {:model "llama3" :soul "." :provider (llm-provider/make-provider "ollama" {}) :context-window 32768}))))
         (should-contain "The file says hello" @output)))
 
     (it "asks the LLM for a final no-tools summary when the tool loop hits max iterations"
@@ -1165,7 +1248,8 @@
                                                        ([_] [{:name "grep" :description "Search" :parameters {}}]))
                       tool-registry/tool-fn          (fn
                                                        ([] (fn [_ _] "3 matches"))
-                                                       ([_] (fn [_ _] "3 matches")))
+                                                       ([_] (fn [_ _] "3 matches"))
+                                                       ([_ _ _] (fn [_ _] "3 matches")))
                       dispatch/dispatch-chat-stream  (fn [_ request on-chunk]
                                                         (swap! requests conj request)
                                                          (swap! call-count inc)
@@ -1187,14 +1271,14 @@
                                                                         :done true})]
                                                            (on-chunk chunk)
                                                            chunk))
-                      config/snapshot            (fn [] {:crew {"main" {:tools {:allow ["grep"]}}}})
+                      config/snapshot            (fn [& _] {:crew {"main" {:tools {:allow ["grep"]}}}})
                       tool-loop/default-max-loops 1]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "poke around"
-                                        {:model "gpt-5.4"
-                                         :soul "You are helpful."
-                                         :provider (llm-provider/make-provider "chatgpt" provider-cfg)
-                                         :context-window 32768})))
+            (dispatch-turn! key-str "poke around"
+                            {:model "gpt-5.4"
+                             :soul "You are helpful."
+                             :provider (llm-provider/make-provider "chatgpt" provider-cfg)
+                             :context-window 32768})))
         (let [messages            (filter #(= "message" (:type %)) (storage/get-transcript test-dir key-str))
               last-assistant-msg  (last (filter #(= "assistant" (get-in % [:message :role])) messages))
               summary-request     (nth @requests 2)
@@ -1231,7 +1315,8 @@
                                                        ([_] [{:name "grep" :description "Search" :parameters {}}]))
                       tool-registry/tool-fn          (fn
                                                        ([] (fn [_ _] "3 matches"))
-                                                       ([_] (fn [_ _] "3 matches")))
+                                                       ([_] (fn [_ _] "3 matches"))
+                                                       ([_ _ _] (fn [_ _] "3 matches")))
                       dispatch/dispatch-chat-stream  (fn [_ request on-chunk]
                                                         (swap! requests conj request)
                                                         (swap! call-count inc)
@@ -1253,14 +1338,14 @@
                                                                        :done true})]
                                                           (on-chunk chunk)
                                                           chunk))
-                      config/snapshot            (fn [] {:crew {"main" {:tools {:allow ["grep"]}}}})
+                      config/snapshot            (fn [& _] {:crew {"main" {:tools {:allow ["grep"]}}}})
                       tool-loop/default-max-loops 1]
           (with-out-str
-            (@#'single-turn/run-turn! key-str "poke around"
-                                        {:model "gpt-5.4"
-                                         :soul "You are helpful."
-                                         :provider (llm-provider/make-provider "chatgpt" provider-cfg)
-                                         :context-window 32768})))
+            (dispatch-turn! key-str "poke around"
+                            {:model "gpt-5.4"
+                             :soul "You are helpful."
+                             :provider (llm-provider/make-provider "chatgpt" provider-cfg)
+                             :context-window 32768})))
         (let [messages           (filter #(= "message" (:type %)) (storage/get-transcript test-dir key-str))
               last-assistant-msg (last (filter #(= "assistant" (get-in % [:message :role])) messages))
               summary-request    (nth @requests 2)]
@@ -1271,7 +1356,7 @@
 
   (describe "uncaught exception handling"
 
-    (around [it] (binding [fs/*fs* (fs/mem-fs)] (it)))
+    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
 
     (it "appends an error entry to the transcript when an exception is thrown"
       (let [key-str "agent:main:cli:direct:crash-test"
@@ -1280,8 +1365,8 @@
           (with-redefs [single-turn/check-compaction!
                         (fn [& _] (throw (ex-info "simulated crash" {:boom true})))]
             (with-out-str
-              (@#'single-turn/run-turn! key-str "trigger crash"
-                                                  {:model "test" :soul "." :provider (llm-provider/make-provider "grover" {}) :context-window 4096})))
+              (dispatch-turn! key-str "trigger crash"
+                              {:model "test" :soul "." :provider (llm-provider/make-provider "grover" {}) :context-window 4096})))
           (catch Exception _))
         (let [transcript (storage/get-transcript test-dir key-str)
               error-entry (last (filter #(= "error" (:type %)) transcript))]
@@ -1297,8 +1382,8 @@
           (with-redefs [single-turn/check-compaction!
                         (fn [& _] (throw (RuntimeException. "boom")))]
             (with-out-str
-              (@#'single-turn/run-turn! key-str "hi"
-                                                  {:model "test" :soul "." :provider (llm-provider/make-provider "grover" {}) :context-window 4096}))))))
+              (dispatch-turn! key-str "hi"
+                              {:model "test" :soul "." :provider (llm-provider/make-provider "grover" {}) :context-window 4096}))))))
 
     (it "transcript ends with error entry so next turn sees balanced user/assistant trail"
       (let [key-str "agent:main:cli:direct:balance-test"
@@ -1307,8 +1392,8 @@
           (with-redefs [single-turn/check-compaction!
                         (fn [& _] (throw (ex-info "oops" {})))]
             (with-out-str
-              (@#'single-turn/run-turn! key-str "user input"
-                                        {:model "test" :soul "." :provider (llm-provider/make-provider "grover" {}) :context-window 4096})))
+              (dispatch-turn! key-str "user input"
+                              {:model "test" :soul "." :provider (llm-provider/make-provider "grover" {}) :context-window 4096})))
           (catch Exception _))
         (let [transcript (storage/get-transcript test-dir key-str)
               last-entry  (last transcript)]
@@ -1374,5 +1459,4 @@
       (should (clojure.string/includes? s "--session agent:main:acp:direct:abc")))))
 
 ;; endregion ^^^^^ Toad ^^^^^
-) ; end describe run-turn!
 ) ; end describe CLI Chat

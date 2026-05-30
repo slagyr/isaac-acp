@@ -1,15 +1,23 @@
 (ns isaac.comm.acp.cli-spec
   (:require
     [cheshire.core :as json]
+    [clojure.java.io :as io]
     [clojure.string :as str]
+    [gherclj.core :as g]
+    [isaac.comm.acp.chat-cli :as chat-cli]
+    [isaac.comm.acp.acp-steps :as acp-steps]
     [isaac.comm.acp.cli :as sut]
+    [isaac.home :as home]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.jsonrpc.dispatch :as dispatch]
     [isaac.util.ws-client :as ws]
     [isaac.cli :as registry]
     [isaac.logger :as log]
     [isaac.fs :as fs]
+    [isaac.main :as main]
     [isaac.scheduler :as scheduler]
+    [isaac.server.cli.cli-steps :as cli-steps]
+    [isaac.session.session-steps :as session-steps]
     [isaac.spec-helper :as helper]
     [isaac.system :as system]
     [speclj.core :refer :all])
@@ -35,8 +43,35 @@
        :exit   @result})))
 
 (defn- mem-run [f]
-  (binding [fs/*fs* (fs/mem-fs)]
+  (system/with-nested-system {:fs (fs/mem-fs)}
     (f)))
+
+(defn- delete-tree! [path]
+  (let [dir (io/file path)]
+    (when (.exists dir)
+      (doseq [f (reverse (file-seq dir))]
+        (.delete f)))))
+
+(defn- write-config! [home data]
+  (let [path (str home "/.isaac/config/isaac.edn")
+        fs*  (system/get :fs)]
+    (fs/mkdirs fs* (fs/parent path))
+    (fs/spit fs* path (pr-str data))))
+
+(defn- run-main! [argv opts]
+  (let [stdin-content (or (:stdin opts) "")
+        output-writer (StringWriter.)
+        error-writer  (StringWriter.)]
+    (registry/register! (sut/make-command))
+    (registry/register! (chat-cli/make-command))
+    (binding [*in*               (BufferedReader. (StringReader. stdin-content))
+              *out*              output-writer
+              *err*              error-writer
+              home/*user-home*   (or (:home opts) home/*user-home*)
+              main/*extra-opts*  (dissoc opts :stdin)]
+      {:exit   (main/run argv)
+       :output (str output-writer)
+       :stderr (str error-writer)})))
 
 (describe "ACP CLI"
 
@@ -49,10 +84,98 @@
     (let [{:keys [stderr exit]} (run-with-stdin "" {:home "/test/no-config"})]
       (should= 1 exit)
       (should (str/includes? stderr "no config found"))
-      (should (str/includes? stderr "/test/no-config/.isaac/config/isaac.edn"))))
+      (should (str/includes? stderr "config/isaac.edn"))))
+
+  (it "fails clearly when local config is missing via main/run"
+    (let [home-dir "/tmp/acp-main-no-config"]
+      (delete-tree! home-dir)
+      (let [{:keys [stderr exit]} (run-main! ["acp"] {:home home-dir})]
+        (should= 1 exit)
+        (should (str/includes? stderr "no config found"))
+        (should (str/includes? stderr "config/isaac.edn")))))
+
+  (it "fails clearly when local config is missing via main/run with an unrelated in-memory state"
+    (system/with-nested-system {:fs (fs/mem-fs)}
+      (write-config! "/test/acp-seeded" {})
+      (let [{:keys [stderr exit]} (run-main! ["acp"] {:home "/test/acp-no-config-home"
+                                                      :fs   (system/get :fs)})]
+        (should= 1 exit)
+        (should (str/includes? stderr "no config found"))
+        (should (str/includes? stderr "config/isaac.edn")))))
 
   (it "returns 0 when stdin is empty"
     (should= 0 (:exit (run-with-stdin "" base-opts))))
+
+  (it "returns a no-model error via main/run when crew resolution yields no model"
+    (let [home-dir   "/tmp/acp-main-no-model"
+          state-dir  (str home-dir "/.isaac")
+          session-id "no-model"]
+      (delete-tree! home-dir)
+      (write-config! home-dir {:crew {:defaults {}}})
+      (helper/create-session! state-dir session-id)
+      (let [{:keys [output exit]}
+            (run-main! ["acp" "--session" session-id]
+                       {:home  home-dir
+                        :stdin (str (jrpc/request-line 1 "initialize" {:protocolVersion 1})
+                                    (jrpc/request-line 2 "session/prompt" {:sessionId session-id
+                                                                           :prompt [{:type "text" :text "hi"}]}))})]
+        (should= 0 exit)
+        (should (str/includes? output "no model configured for crew: main")))))
+
+  (it "returns a no-model error via main/run with config at home and session in the registered store"
+    (system/with-nested-system {:fs (fs/mem-fs)}
+      (let [home-dir   "/test/acp-home"
+            state-dir  "/test/acp-state/.isaac"
+            session-id "no-model"]
+        (write-config! home-dir {:crew {:defaults {}}})
+        (helper/create-session! state-dir session-id)
+        (let [{:keys [output exit]}
+              (run-main! ["acp" "--session" session-id]
+                         {:home  home-dir
+                          :fs    (system/get :fs)
+                          :stdin (str (jrpc/request-line 1 "initialize" {:protocolVersion 1})
+                                      (jrpc/request-line 2 "session/prompt" {:sessionId session-id
+                                                                             :prompt [{:type "text" :text "hi"}]}))})]
+          (should= 0 exit)
+          (should (str/includes? output "no model configured for crew: main"))))))
+
+  (describe "feature harness reproductions"
+
+    (it "passes isaac-home through cli_steps as the main home override"
+      (let [captured (atom nil)]
+        (g/reset!)
+        (session-steps/default-grover-setup)
+        (cli-steps/isaac-home-has-no-config "target/test-home")
+        (with-redefs [main/run (fn [_]
+                                 (reset! captured main/*extra-opts*)
+                                 0)]
+          (cli-steps/isaac-run "acp"))
+        (should= (str (System/getProperty "user.dir") "/target/test-home")
+                 (:home @captured))
+        (should-be-nil (:state-dir @captured))
+        (should= (system/get :fs) (:fs @captured))))
+
+    (it "reports missing config through the shared CLI feature steps"
+      (g/reset!)
+      (session-steps/default-grover-setup)
+      (acp-steps/acp-commands-registered)
+      (cli-steps/isaac-home-has-no-config "target/test-home")
+      (cli-steps/stdin-is "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1}}")
+      (cli-steps/isaac-run "acp")
+      (should= 1 (g/get :exit-code))
+      (should (str/includes? (g/get :stderr) "no config found")))
+
+    (it "reports no-model through the shared CLI feature steps"
+      (g/reset!)
+      (session-steps/default-grover-setup)
+      (acp-steps/acp-commands-registered)
+      (cli-steps/isaac-home-contains-config "target/test-home" "{:crew {:defaults {}}}")
+      (session-steps/sessions-exist {:headers ["name"] :rows [["no-model"]]})
+      (cli-steps/stdin-is (str "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1}}\n"
+                               "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"no-model\",\"prompt\":[{\"type\":\"text\",\"text\":\"hi\"}]}}"))
+      (cli-steps/isaac-run "acp --session no-model")
+      (should= 0 (g/get :exit-code))
+      (should (str/includes? (g/get :output) "no model configured for crew: main")))))
 
   (it "writes JSON response to stdout for each request"
     (with-redefs [dispatch/handle-line (fn [_ _] (jrpc/result 1 {:ok true}))]
@@ -329,5 +452,3 @@
         (should @disconnected?)
         (finally
           (scheduler/shutdown! scheduler-instance)))))
-
-  )

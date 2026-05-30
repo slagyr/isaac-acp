@@ -16,11 +16,12 @@
     [isaac.comm.acp.websocket :as acp-websocket]
     [isaac.util.ws-client :as ws]
     [isaac.config.loader :as config]
-    [isaac.step-tables :as match]
     [isaac.fs :as fs]
     [isaac.llm.api.grover :as grover]
     [isaac.llm.http :as llm-http]
     [isaac.main :as main]
+    [isaac.nexus :as nexus]
+    [isaac.step-tables :as match]
     [ring.util.codec :as codec]))
 
 (helper! isaac.comm.acp.acp-steps)
@@ -169,6 +170,7 @@
 (defn- dispatch-message! [message async?]
   (let [line          (json/generate-string message)
         state-dir     (g/get :state-dir)
+        live-writer   (when state-dir (StringWriter.))
         mem-fs        (g/get :mem-fs)
         llm-http-stub (g/get :llm-http-stub)
         custom-fn     (g/get :acp-dispatch-fn)
@@ -184,20 +186,22 @@
                           state-dir
                           (let [agents (g/get :agents)
                                 models (g/get :models)
+                                writer live-writer
                                 result (acp-server/dispatch-line (cond-> {:state-dir        state-dir
                                                                            :provider-configs (g/get :provider-configs)
-                                                                           :output-writer    enqueue-output-line!}
-                                                                    agents (assoc :agents agents)
+                                                                           :output-writer    writer}
+                                                                    agents (assoc :crew-members agents)
                                                                     models (assoc :models models)
-                                                                    (and (nil? agents) (nil? models)) (assoc :cfg (config/load-config {:home state-dir})))
+                                                                    (and (nil? agents) (nil? models)) (assoc :cfg (config/load-config {:state-dir state-dir})))
                                                                   line)]
+                            (enqueue-output-lines! writer)
                             (record-dispatch-result! result))
 
                           :else
                           (record-dispatch-result! (fallback-fn line))))
         run-dispatch! (fn []
                         (let [run! #(if mem-fs
-                                      (binding [fs/*fs* mem-fs] (do-dispatch!))
+                                      (nexus/-with-nested-nexus {:fs mem-fs} (do-dispatch!))
                                       (do-dispatch!))]
                           (case llm-http-stub
                             :connection-refused
@@ -208,7 +212,14 @@
     (cond
       (and async? (= "session/prompt" (:method message)))
       (let [turn* (future
-                    (run-dispatch!))]
+                    (when live-writer
+                      (g/assoc! :live-output-writer live-writer)
+                      (g/assoc! :acp-output-offset 0))
+                    (try
+                      (run-dispatch!)
+                      (finally
+                        (when live-writer
+                          (g/dissoc! :live-output-writer)))))]
         (g/assoc! :acp-turn-future turn*))
 
       (= "session/cancel" (:method message))
@@ -273,7 +284,7 @@
         query       (query-params (:query-string request))
         agent-id    (or (get query "crew") (get query "agent") "main")
         cfg         (when (and state-dir (nil? agents) (nil? models))
-                      (config/load-config {:home state-dir}))]
+                      (config/load-config {:state-dir state-dir}))]
     {:request     {:headers      {"x-forwarded-for" "loopback"}
                    :query-string (:query-string request)
                    :uri          "/acp"}
@@ -282,7 +293,7 @@
                            :provider-configs provider-cfgs
                            :agent-id         agent-id
                            :model-override   (get query "model")}
-                     agents (assoc :agents agents)
+                     agents (assoc :crew-members agents)
                     models (assoc :models models)
                     cfg    (assoc :cfg cfg))}))
 
@@ -345,7 +356,7 @@
                         (when-not @(:permanent? transport)
                           (recur)))))]
       (if mem-fs
-        (binding [fs/*fs* mem-fs] (run-loop))
+        (nexus/-with-nested-nexus {:fs mem-fs} (run-loop))
         (run-loop)))))
 
 (defn ensure-loopback-proxy! []
@@ -478,20 +489,22 @@
         cfg            (or (g/get :server-config) {})
         server-runner* (start-loopback-server! transport state-dir (g/get :agents) (g/get :models) provider-cfgs mem-fs)
         run*           (future
-                         (binding [*in*  (java.io.BufferedReader. (java.io.StringReader. ""))
-                                    *out* output-writer
-                                    *err* error-writer
-                                    fs/*fs* (or mem-fs fs/*fs*)
-                                    main/*extra-opts* {:state-dir state-dir
-                                                       :provider-configs provider-cfgs
-                                                       :acp-proxy-max-reconnects (get-in cfg [:acp :proxy-max-reconnects])
-                                                       :acp-proxy-reconnect-delay-ms (get-in cfg [:acp :proxy-reconnect-delay-ms])
-                                                      :acp-read-line-fn next-proxy-line
-                                                      :ws-connection-factory (fn [url _]
-                                                                               (g/assoc! :acp-loopback-request {:query-string (when (str/includes? url "?")
-                                                                                                                        (subs url (inc (str/index-of url "?"))))})
-                                                                               (ws/connect-loopback! transport url))}]
-                           (g/assoc! :exit-code (main/run argv))))]
+                         (let [run! #(binding [*in*  (java.io.BufferedReader. (java.io.StringReader. ""))
+                                               *out* output-writer
+                                               *err* error-writer
+                                               main/*extra-opts* {:state-dir state-dir
+                                                                  :provider-configs provider-cfgs
+                                                                  :acp-proxy-max-reconnects (get-in cfg [:acp :proxy-max-reconnects])
+                                                                  :acp-proxy-reconnect-delay-ms (get-in cfg [:acp :proxy-reconnect-delay-ms])
+                                                                  :acp-read-line-fn next-proxy-line
+                                                                  :ws-connection-factory (fn [url _]
+                                                                                           (g/assoc! :acp-loopback-request {:query-string (when (str/includes? url "?")
+                                                                                                                                            (subs url (inc (str/index-of url "?"))))})
+                                                                                           (ws/connect-loopback! transport url))}]
+                                        (g/assoc! :exit-code (main/run argv)))]
+                           (if mem-fs
+                             (nexus/-with-nested-nexus {:fs mem-fs} (run!))
+                             (run!))))]
     (g/assoc! :acp-loopback-server-runner server-runner*)
     (g/assoc! :proxy-stdin-queue stdin-queue)
     (g/assoc! :live-output-writer output-writer)
@@ -543,6 +556,9 @@
                      false)
   (when-not (await-message #(= 0 (:id %)))
     (throw (ex-info "ACP initialize did not return a response" {:id 0}))))
+
+(defn acp-commands-registered []
+  true)
 
 ;; region ----- Step routing -----
 
@@ -604,5 +620,9 @@
    (or times out). Matches the response object against the table.")
 
 (defgiven "the ACP client has initialized" isaac.comm.acp.acp-steps/acp-client-initialized)
+
+(defgiven "the ACP commands are registered" isaac.comm.acp.acp-steps/acp-commands-registered
+  "No-op step that forces gherclj to load ACP step namespaces so command
+   registration and isaac-run preflights are installed for CLI features.")
 
 ;; endregion ^^^^^ Step routing ^^^^^
