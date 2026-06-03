@@ -192,7 +192,7 @@
                                                                            :output-writer    writer}
                                                                     agents (assoc :crew-members agents)
                                                                     models (assoc :models models)
-                                                                    (and (nil? agents) (nil? models)) (assoc :cfg (config/load-config {:state-dir state-dir})))
+                                                                    (and (nil? agents) (nil? models)) (assoc :cfg (:config (config/load-config-result {:state-dir state-dir}))))
                                                                   line)]
                             (enqueue-output-lines! writer)
                             (record-dispatch-result! result))
@@ -284,7 +284,7 @@
         query       (query-params (:query-string request))
         agent-id    (or (get query "crew") (get query "agent") "main")
         cfg         (when (and state-dir (nil? agents) (nil? models))
-                      (config/load-config {:state-dir state-dir}))]
+                      (:config (config/load-config-result {:state-dir state-dir})))]
     {:request     {:headers      {"x-forwarded-for" "loopback"}
                    :query-string (:query-string request)
                    :uri          "/acp"}

@@ -53,7 +53,7 @@
 (defn- build-server-opts [opts]
   (let [home         (home-dir opts)
         requested-sdir (state-dir opts)
-        cfg          (config/normalize-config (config/load-config {:state-dir requested-sdir}))
+        cfg          (config/normalize-config (:config (config/load-config-result {:state-dir requested-sdir})))
         sdir         (or (:state-dir cfg) (:stateDir cfg) requested-sdir)
         out          (or (:output-writer opts) *out*)
         crew-members (or (when (map? (:crew opts)) (:crew opts)) (:agents opts))
@@ -356,7 +356,8 @@
 
 (defn- remote-proxy-defaults [opts]
   (let [home       (or (:home opts) (System/getProperty "user.home"))
-        config-acp (:acp (config/load-config {:home home}))]
+        state-dir  (str home "/.isaac")
+        config-acp (:acp (:config (config/load-config-result {:state-dir state-dir})))]
     (merge {:acp-proxy-reconnect-delay-ms     (or (:acp-proxy-reconnect-delay-ms opts)
                                                   (:proxy-reconnect-delay-ms config-acp)
                                                   1000)

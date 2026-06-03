@@ -5,13 +5,11 @@
     [isaac.charge :as charge]
     [isaac.comm.acp :as acp-comm]
     [isaac.config.loader :as config]
-    [isaac.fs :as fs]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.jsonrpc.dispatch :as dispatch]
     [isaac.drive.turn :as single-turn]
     [isaac.llm.api :as llm-api]
     [isaac.logger :as log]
-    [isaac.prompt.catalog :as prompt-catalog]
     [isaac.server.routes]
     [isaac.session.store :as store]
     [isaac.session.transcript :as message-content]
@@ -19,18 +17,15 @@
     [isaac.system :as system]))
 
 (defn- available-commands []
-  ;; Registered commands (built-ins + module-declared) come from slash-registry;
-  ;; config-defined prompt-template commands (<state-dir>/config/commands/*.md)
-  ;; are no longer surfaced by slash-registry/all-commands — they're discovered
-  ;; by prompt-catalog at runtime, so we merge both sources here.
-  (let [cfg       (or (config/snapshot "ACP available command advertisement") {})
-        state-dir (or (:state-dir cfg) (system/get :state-dir))
-        catalog   (prompt-catalog/resolve-catalog {:config    cfg
-                                                   :cwd       (System/getProperty "user.dir")
-                                                   :fs        (fs/instance)
-                                                   :state-dir state-dir})]
-    (concat (slash-registry/all-commands (:module-index cfg))
-            (vals (:commands catalog)))))
+  ;; slash-registry/all-commands (2-arg) merges built-ins + module-declared
+  ;; commands + config-defined prompt-template commands and de-dups by name
+  ;; (registered wins). It falls back to the nexus for :state-dir and :fs,
+  ;; but :cwd has to come from us — without it, the prompt catalog only
+  ;; scans global roots and project-scoped commands are missed.
+  (let [cfg (or (config/snapshot "ACP available command advertisement") {})]
+    (slash-registry/all-commands (:module-index cfg)
+                                 {:config cfg
+                                  :cwd    (System/getProperty "user.dir")})))
 
 (def ^:private startup-cwd (System/getProperty "user.dir"))
 
