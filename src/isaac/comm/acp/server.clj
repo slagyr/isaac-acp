@@ -10,6 +10,7 @@
     [isaac.drive.turn :as single-turn]
     [isaac.llm.api :as llm-api]
     [isaac.logger :as log]
+    [isaac.root :as root]
     [isaac.server.routes]
     [isaac.session.store :as store]
     [isaac.session.transcript :as message-content]
@@ -32,7 +33,7 @@
 (defn- session-store []
   (or (system/get :session-store)
       (store/registered-store)
-      (store/create (system/get :state-dir))))
+      (store/create (root/current-root))))
 
 (defn- with-startup-cwd [f]
   (let [original (System/getProperty "user.dir")]
@@ -191,7 +192,7 @@
         payload  (assoc ctx :comm channel
                              :session-key session-id
                              :input text
-                             :state-dir (or (:state-dir ctx) (system/get :state-dir)))
+                             :state-dir (or (:state-dir ctx) (root/current-root)))
         result   (try
                    (with-startup-cwd #(bridge/dispatch! (charge/build payload)))
                   (catch Exception e

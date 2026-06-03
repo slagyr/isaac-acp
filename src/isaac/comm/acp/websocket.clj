@@ -5,6 +5,7 @@
     [isaac.config.loader :as config]
     [isaac.fs :as fs]
     [isaac.logger :as log]
+    [isaac.root :as root]
     [isaac.session.store :as store]
     [isaac.system :as system]
     [isaac.util.jsonrpc.dispatch :as dispatch]
@@ -44,10 +45,9 @@
                  (.setDaemon true))))))
 
 (defn- requested-session-key [{:keys [query-params crew-id]}]
-  (let [state-dir         (system/get :state-dir)
-        session-store     (or (system/get :session-store)
+  (let [session-store     (or (system/get :session-store)
                               (store/registered-store)
-                              (when state-dir (store/create state-dir)))
+                              (store/create (root/current-root)))
         requested-session (get query-params "session")]
     (cond
       requested-session
@@ -55,7 +55,7 @@
         requested-session
         ::missing-session)
 
-      (and state-dir (= "true" (get query-params "resume")))
+      (= "true" (get query-params "resume"))
       (some->> (store/list-sessions-by-agent session-store (or crew-id "main"))
                (sort-by :updated-at)
                last
@@ -160,7 +160,7 @@
 (defn handler [request]
   (let [opts     {:cfg          (config/snapshot "ACP websocket handler entry")
                   :query-params (query-params request)
-                  :state-dir    (system/get :state-dir)}
+                  :state-dir    (root/current-root)}
         cfg-opts opts]
     (if-not (:websocket? request)
       {:status  400
