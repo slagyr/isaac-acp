@@ -2,6 +2,7 @@
   (:require
     [cheshire.core :as json]
     [isaac.comm.acp.server :as acp-server]
+    [isaac.comm.acp.websocket.heartbeat :as heartbeat]
     [isaac.config.loader :as config]
     [isaac.fs :as fs]
     [isaac.logger :as log]
@@ -166,17 +167,30 @@
       {:status  400
        :headers {"Content-Type" "text/plain"}
        :body    "websocket required"}
-      (httpkit/as-channel request {:on-open    (fn [_channel]
+      (httpkit/as-channel request {:on-open    (fn [channel]
+                                                 ;; Register the channel + ensure the shared heartbeat
+                                                 ;; task is running. The task sends a tiny JSON-RPC
+                                                 ;; `$/heartbeat` notification to every open channel
+                                                 ;; every :acp :heartbeat-interval-ms (default 30s),
+                                                 ;; keeping the link warm against NAT, reverse-proxy,
+                                                 ;; and Tailscale idle timeouts. App-layer because
+                                                 ;; babashka's SCI can't construct httpkit's
+                                                 ;; Frame$PingFrame; the keepalive effect is identical
+                                                 ;; — what matters is bytes on the wire.
+                                                 (heartbeat/register-channel! channel)
+                                                 (heartbeat/ensure-started! (:cfg cfg-opts))
                                                  (log/debug :acp-ws/connection-opened
                                                             :client (request-client request)
                                                             :uri (:uri request)))
                                    :on-close   (fn
-                                                 ([_channel status]
+                                                 ([channel status]
+                                                  (heartbeat/deregister-channel! channel)
                                                   (log/debug :acp-ws/connection-closed
                                                              :client (request-client request)
                                                              :status status
                                                              :uri (:uri request)))
-                                                 ([_channel status reason]
+                                                 ([channel status reason]
+                                                  (heartbeat/deregister-channel! channel)
                                                   (log/debug :acp-ws/connection-closed
                                                              :client (request-client request)
                                                              :reason reason
