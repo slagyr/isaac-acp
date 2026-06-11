@@ -41,10 +41,12 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.deps.clj
-            .cpcache
           key: ${{ runner.os }}-clojure-${{ hashFiles('**/deps.edn', '**/bb.edn') }}
           restore-keys: |
             ${{ runner.os }}-clojure-
+
+      - name: Clear Babashka classpath cache
+        run: rm -rf .cpcache
 
       - name: Run CI (specs + features)
         run: bb ci
