@@ -1,5 +1,8 @@
 {:paths ["src" "spec"]
 
+ :deps  {io.github.slagyr/gherclj {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
+         speclj/speclj            {:mvn/version "3.13.0"}}
+
  ;; bb tasks auto-detect isaac: a sibling ../isaac checkout (so cross-repo
  ;; edits land without pushing) when present, otherwise the pinned git sha
  ;; (so fresh clones / CI just work). Set ISAAC_GIT=1 to force git even
