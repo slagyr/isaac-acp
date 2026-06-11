@@ -141,6 +141,14 @@
     (json/parse-string line true)
     (catch Exception _ nil)))
 
+(defn- heartbeat-line?
+  "Server emits {jsonrpc 2.0, method $/heartbeat} every 30s to keep
+   the WebSocket warm against NAT/proxy idle timeouts. The frame is
+   for the proxy↔server transport layer only — forwarding it to Toad
+   surfaces as a useless 'Method not found' error per tick."
+  [line]
+  (= "$/heartbeat" (:method (parse-line line))))
+
 (defn- message-session-id [message]
   (or (get-in message [:params :sessionId])
       (get-in message [:result :sessionId])))
@@ -441,7 +449,7 @@
           (when event
             (case (:type event)
               :message
-              (do
+              (when-not (heartbeat-line? (:line event))
                 (cache-session-id! session-id* (:line event))
                 (write-line! (:line event))
                 (when-let [response-id (request-id (:line event))]

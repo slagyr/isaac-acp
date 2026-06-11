@@ -397,6 +397,37 @@
           (should= [:acp-proxy/connected :acp-proxy/initialize :acp-proxy/disconnected]
                    (mapv :event @log/captured-logs))))))
 
+  (it "swallows server-side $/heartbeat notifications instead of forwarding them to Toad"
+    ;; The server emits a tiny $/heartbeat keepalive every 30s. It's
+    ;; meant for the proxy ↔ server WebSocket layer; it should not
+    ;; reach Toad. If it does, Toad doesn't recognize the method and
+    ;; bounces back a JSON-RPC "Method not found" error per frame —
+    ;; useless noise that also goes back over the wire to the server.
+    (let [request (jrpc/request-line 1 "initialize" {:protocolVersion 1})
+          rq      (LinkedBlockingQueue.)
+          conn    (reify ws/WsConnection
+                    (ws-send!    [_ _]
+                      (.put rq "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1}}")
+                      (.put rq "{\"jsonrpc\":\"2.0\",\"method\":\"$/heartbeat\"}")
+                      nil)
+                    (ws-receive! [_]
+                      (let [v (.take rq)]
+                        (when (not= ::eof v) v)))
+                    (ws-receive! [_ timeout-ms]
+                      (let [v (.poll rq timeout-ms TimeUnit/MILLISECONDS)]
+                        (when (and v (not= ::eof v)) v)))
+                    (ws-close!   [_]   (.offer rq ::eof) nil))]
+      (let [{:keys [exit output]} (run-with-stdin request
+                                                  (assoc base-opts
+                                                    :remote "ws://test/acp"
+                                                    :acp-proxy-eof-grace-ms 0
+                                                    :ws-connection-factory (fn [_ _] conn)))]
+        (should= 0 exit)
+        ;; Initialize response still reaches Toad…
+        (should (str/includes? output "protocolVersion"))
+        ;; …but the heartbeat must not leak through.
+        (should-not (str/includes? output "$/heartbeat")))))
+
   (it "reconnects after a dropped remote connection and emits status notifications"
     (let [transport (ws/reconnectable-loopback)
           state-dir (str "/test/acp-proxy-status-" (random-uuid))
