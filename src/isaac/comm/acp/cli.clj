@@ -14,8 +14,8 @@
     [isaac.config.loader :as config]
     [isaac.logger :as log]
     [isaac.scheduler :as scheduler]
+    [isaac.nexus :as nexus]
     [isaac.session.store :as store]
-    [isaac.system :as system]
     [isaac.tool.builtin :as builtin]))
 
 (def option-spec
@@ -465,7 +465,7 @@
         token   (:token opts)
         factory (or (:ws-connection-factory opts) ws/connect!)]
     (when-let [state-dir (:state-dir opts)]
-      (system/register! :state-dir state-dir)
+      (nexus/register! [:state-dir] state-dir)
       (store/register! (or (config/snapshot "ACP CLI remote session-store bootstrap") {}) state-dir))
     (try
       (let [conn*               (atom (connect-remote! factory url token))
@@ -530,7 +530,7 @@
 
 (defn- run-local [opts crew-id model-alias session-key resume?]
   (let [server-opts (build-server-opts opts)]
-    (system/register! :state-dir (:state-dir server-opts))
+    (nexus/register! [:state-dir] (:state-dir server-opts))
     (store/register! (or (config/snapshot "ACP CLI local session-store bootstrap") {}) (:state-dir server-opts))
     (let [resumed-key (when resume? (resumed-session-key crew-id))
           attach-key  (resolve-attach-key session-key resumed-key)]
