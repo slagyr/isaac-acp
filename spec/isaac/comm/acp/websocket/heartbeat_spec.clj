@@ -69,7 +69,19 @@
 
     (it "does nothing when no channels are registered"
       (with-redefs [httpkit/send! (fn [_ _] (throw (Exception. "should not be called")))]
-        (should-not-throw (sut/beat-all!)))))
+        (should-not-throw (sut/beat-all!))))
+
+    (it "is callable with the 1-arg run-ctx the scheduler passes"
+      ;; isaac.scheduler invokes recurring handlers with one ctx-map
+      ;; argument. Before the 1-arity overload landed, beat-all! was
+      ;; 0-arity and every scheduler tick threw "Wrong number of args
+      ;; (1) passed to ...", so no frames actually went out — long
+      ;; tool calls silently dropped on NAT idle. Lock that in.
+      (let [sent (atom 0)]
+        (with-redefs [httpkit/send! (fn [_ _] (swap! sent inc))]
+          (sut/register-channel! :chan-a)
+          (should-not-throw (sut/beat-all! {:any :ctx}))
+          (should= 1 @sent)))))
 
   (context "ensure-started!"
 
