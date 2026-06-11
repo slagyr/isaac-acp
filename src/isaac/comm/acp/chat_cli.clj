@@ -3,8 +3,8 @@
     [clojure.string :as str]
     [clojure.tools.cli :as tools-cli]
     [isaac.cli :as registry]
-    [isaac.config.paths :as paths]
     [isaac.config.loader :as config]
+    [isaac.root :as root]
     [isaac.util.shell :as shell]))
 
 ;; region ----- Toad -----
@@ -56,13 +56,11 @@
   (binding [*out* *err*]
     (println message)))
 
-(defn- home-dir [{:keys [home state-dir]}]
-  (or home state-dir (System/getProperty "user.home")))
-
 (defn- state-dir [opts]
   (or (:state-dir opts)
-      (some-> (:home opts) paths/default-state-dir)
-      (paths/default-state-dir (home-dir opts))))
+      (:root opts)
+      (:home opts)
+      (root/current-root)))
 
 (defn- missing-local-config? [opts]
   (let [result (config/load-config-result {:state-dir (state-dir opts)})]
