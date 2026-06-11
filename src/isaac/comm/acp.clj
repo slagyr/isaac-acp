@@ -66,18 +66,23 @@
       tool-name)))
 
 (defn- tool-call-notification [session-id tool-call]
-  ;; Status is "in_progress" — per the ACP spec, "pending" specifically
-  ;; means "input still streaming OR awaiting approval", neither of which
-  ;; applies in isaac: the tool runs immediately once dispatched. Toad
-  ;; renders pending as the stuck-hourglass state, so using "in_progress"
-  ;; here is what lets the eventual tool_call_update (status "completed")
-  ;; flip the indicator to a checkmark.
+  ;; status "pending" — Toad's tool-call widget renders pending as ⌛,
+  ;; in_progress as nothing (literally a `pass`), completed as ✔. The
+  ;; expected lifecycle is pending → completed via the eventual
+  ;; tool_call_update; the prior heartbeat-dropping-at-60s bug (since
+  ;; fixed) was what made hourglass appear stuck.
+  ;; :content carries the rawInput rendered as text so Toad's
+  ;; can_expand (gated on has_content) is true from the start — the
+  ;; tool call is expandable to inspect arguments even mid-flight.
   (jsonrpc/session-update session-id {:sessionUpdate "tool_call"
-                                      :status        "in_progress"
+                                      :status        "pending"
                                       :toolCallId    (:id tool-call)
                                       :title         (tool-title (:name tool-call) (:arguments tool-call))
                                       :kind          (tool-kind (:name tool-call))
-                                      :rawInput      (:arguments tool-call)}))
+                                      :rawInput      (:arguments tool-call)
+                                      :content       [{:type    "content"
+                                                       :content {:type "text"
+                                                                 :text (pr-str (:arguments tool-call))}}]}))
 
 (defn- replay-tool-call-notification [session-id tool-call result]
   {:jsonrpc "2.0"
