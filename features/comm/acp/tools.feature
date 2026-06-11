@@ -68,5 +68,5 @@ Feature: ACP Tool Calls
       | params.prompt[0].text | Run echo       |
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.toolCallId | params.update.rawOutput | params.update.content[0].type |
-      | session/update | tool_call                   | #*                       |                         |                               |
+      | session/update | tool_call                   | #*                       |                         | content                       |
       | session/update | tool_call_update            | #*                       | #*                      | content                       |
