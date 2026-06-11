@@ -1,5 +1,6 @@
 {:id          :isaac.comm.acp
  :version     "0.1.0"
+ :factory     isaac.module/module
  :description "ACP (Agent Communication Protocol) for isaac — stdio agent surface, WebSocket transport, and the chat TUI launcher."
 
  ;; HTTP route contributed via the :isaac.server/route berth. Discord and
