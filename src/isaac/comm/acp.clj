@@ -2,6 +2,7 @@
   (:require
     [isaac.comm :as comm]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
+    [isaac.logger :as log]
     [isaac.util.jsonrpc :as jrpc]))
 
 (defn- write! [output-writer message]
@@ -128,10 +129,12 @@
       (when (seq display)
         (write! output-writer (text-notification session-key display)))))
   (on-tool-call [_ session-key tool-call]
+    (log/debug :acp-comm/tool-call-emit :session session-key :toolCallId (:id tool-call) :tool (:name tool-call))
     (write! output-writer (tool-call-notification session-key tool-call)))
   (on-tool-cancel [_ session-key tool-call]
     (write! output-writer (tool-cancel-notification session-key tool-call)))
   (on-tool-result [_ session-key tool-call result]
+    (log/debug :acp-comm/tool-result-emit :session session-key :toolCallId (:id tool-call) :tool (:name tool-call))
     (write! output-writer (tool-result-notification session-key tool-call result)))
   (on-compaction-start [_ session-key _payload]
     (write! output-writer (thought-notification session-key "compacting...")))
