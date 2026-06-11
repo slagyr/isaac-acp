@@ -6,6 +6,7 @@
     [clojure.string :as str]
     [isaac.cli :as registry]
     [isaac.comm.acp :as acp]
+    [isaac.comm.acp.cli.queue :as queue]
     [isaac.comm.acp.server :as server]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.jsonrpc.dispatch :as dispatch]
@@ -165,6 +166,14 @@
 (defn- write-status-notification! [session-id* opts text]
   (when-let [session-id (or @session-id* (default-session-id opts))]
     (reset! session-id* session-id)
+    (jrpc/write-message! *out* (status-notification session-id text))))
+
+(defn- write-thought-chunk! [session-id text]
+  ;; Direct thought-chunk emit for a specific session — used by the
+  ;; per-session prompt queue (isaac.comm.acp.cli.queue) which knows
+  ;; exactly which session the chunk is for, no fallback to the cached
+  ;; session-id* needed.
+  (when session-id
     (jrpc/write-message! *out* (status-notification session-id text))))
 
 (defn- request-id [line]
@@ -354,6 +363,33 @@
           (when (await-connected! active? disconnected?)
             (recur)))))))
 
+(defn- handle-stdin-line! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* line]
+  ;; Pre-forward decision for session/prompt and session/cancel via
+  ;; isaac.comm.acp.cli.queue. Any other line (initialize,
+  ;; session/new, …) flows straight through.
+  (let [forward! (fn [l]
+                   (forward-input-line! scheduler-instance active? conn* remote-queue*
+                                        disconnected? session-id* pending-request*
+                                        factory url token opts l))]
+    (cond
+      (queue/prompt-line? line)
+      (let [session-id (queue/message-session-id line)
+            [decision _line] (queue/handle-prompt queue-state* session-id line)]
+        (case decision
+          :forward (forward! line)
+          :queue   (write-thought-chunk! session-id queue/queued-thought-text)
+          :reject  (write-thought-chunk! session-id queue/queue-full-thought-text)))
+
+      (queue/cancel-line? line)
+      (let [session-id (queue/message-session-id line)
+            [decision _line] (queue/handle-cancel queue-state* session-id line)]
+        (case decision
+          :forward     (forward! line)
+          :clear-queue (write-thought-chunk! session-id queue/queue-cleared-thought-text)))
+
+      :else
+      (forward! line))))
+
 (defn- remote-proxy-defaults [opts]
   (let [home       (or (:home opts) (System/getProperty "user.home"))
         state-dir  (str home "/.isaac")
@@ -366,7 +402,7 @@
                                                   5000)}
            opts)))
 
-(defn- run-stdin-thread! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts input-queue]
+(defn- run-stdin-thread! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* input-queue]
   (future
     (loop []
       (when @active?
@@ -379,13 +415,25 @@
             nil
 
             (= :stdin (:type event))
-            (do (forward-input-line! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts (:line event))
+            (do (handle-stdin-line! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* (:line event))
                 (recur))
 
             :else
             (recur)))))))
 
-(defn- run-remote-thread! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts]
+(defn- drain-queue-on-turn-end! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* line]
+  ;; If this server frame carries stopReason :end_turn, signal the
+  ;; per-session queue. If a queued prompt was waiting, forward it as
+  ;; the next session/prompt.
+  (when (queue/turn-end? line)
+    (when-let [session-id (or (queue/message-session-id line) @session-id*)]
+      (let [outcome (queue/handle-turn-end queue-state* session-id)]
+        (when (= :drain (first outcome))
+          (forward-input-line! scheduler-instance active? conn* remote-queue*
+                               disconnected? session-id* pending-request*
+                               factory url token opts (second outcome)))))))
+
+(defn- run-remote-thread! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state*]
   (future
     (loop []
       (when @active?
@@ -397,7 +445,10 @@
                 (cache-session-id! session-id* (:line event))
                 (write-line! (:line event))
                 (when-let [response-id (request-id (:line event))]
-                  (swap! pending-request* (fn [reqs] (vec (remove #(= response-id (:id %)) reqs))))))
+                  (swap! pending-request* (fn [reqs] (vec (remove #(= response-id (:id %)) reqs)))))
+                (drain-queue-on-turn-end! scheduler-instance active? conn* remote-queue*
+                                          disconnected? session-id* pending-request*
+                                          factory url token opts queue-state* (:line event)))
 
               :connection-error
               (connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)
@@ -424,6 +475,10 @@
             pending-request*    (atom [])
             active?             (atom true)
             input-queue         (start-input-reader! opts)
+            ;; Per-session prompt queue + cancel-tracking. Seeded with
+            ;; opts when tests want to pre-populate a queued state.
+            queue-state*        (or (:acp-proxy-queue-state* opts)
+                                    (atom (queue/fresh-state)))
             ;; Private 1-thread scheduler dedicated to this proxy invocation.
             ;; The proxy only schedules one task (the reconnect retry); tick
             ;; submits the handler and exits before the handler runs, so
@@ -438,8 +493,8 @@
             eof-grace-ms        (or (:acp-proxy-eof-grace-ms opts) 50)
             pending-timeout-ms  (or (:acp-proxy-pending-timeout-ms opts) 2000)]
         (log/debug :acp-proxy/connected :url url)
-        (let [stdin-fut  (run-stdin-thread! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts input-queue)
-              remote-fut (run-remote-thread! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)]
+        (let [stdin-fut  (run-stdin-thread! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* input-queue)
+              remote-fut (run-remote-thread! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state*)]
           (try
             @stdin-fut
             (let [pending-deadline (+ (System/currentTimeMillis) pending-timeout-ms)]
