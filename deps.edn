@@ -4,32 +4,6 @@
          org.babashka/http-client {:mvn/version "0.4.22"}
          org.clojure/tools.cli    {:mvn/version "1.1.230"}}
 
- :isaac/manifest
- {:id          :isaac.comm.acp
-  :version     "0.1.0"
-  :description "ACP (Agent Communication Protocol) for isaac — stdio agent surface, WebSocket transport, and the chat TUI launcher."
-
-  ;; HTTP route contributed via the :isaac.server/route berth. Discord and
-  ;; other websocket clients use /acp as the gateway.
-  :isaac.server/route
-  [{:method :get :path "/acp" :handler isaac.comm.acp.websocket/handler}]
-
-  ;; CLI subcommands contributed via the :cli berth. Each entry directly
-  ;; carries :name / :usage / :desc / :option-spec / :run-fn — symbols get
-  ;; requiring-resolve'd at registration time, so :option-spec and :run-fn
-  ;; point at vars defined in this module.
-  :cli
-  [{:name        "acp"
-    :usage       "acp [options]"
-    :desc        "Run Isaac as an ACP agent over stdio"
-    :option-spec isaac.comm.acp.cli/option-spec
-    :run-fn      isaac.comm.acp.cli/run-fn}
-   {:name        "chat"
-    :usage       "chat [options]"
-    :desc        "Launch Toad chat UI"
-    :option-spec isaac.comm.acp.chat-cli/option-spec
-    :run-fn      isaac.comm.acp.chat-cli/run-fn}]}
-
  :aliases
  {:dev-local {:override-deps {io.github.slagyr/isaac      {:local/root "../isaac"}
                               io.github.slagyr/isaac-spec {:local/root "../isaac/spec"}}}
