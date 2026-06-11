@@ -70,10 +70,16 @@
 (defn beat-all!
   "Send a heartbeat to every currently-registered channel. Snapshots
    the registry first so a concurrent `on-close` deregistering a
-   channel mid-iteration doesn't fight with the snapshot."
-  []
-  (doseq [channel (open-channels)]
-    (send-heartbeat! channel)))
+   channel mid-iteration doesn't fight with the snapshot.
+
+   Accepts (and ignores) an optional run-ctx argument because
+   isaac.scheduler invokes handlers with one map arg — without this
+   arity the handler throws every tick and no heartbeats actually go
+   out, defeating the keepalive."
+  ([] (beat-all! nil))
+  ([_run-ctx]
+   (doseq [channel (open-channels)]
+     (send-heartbeat! channel))))
 
 (defn- task-running? []
   (some? @task-id*))
