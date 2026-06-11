@@ -17,9 +17,9 @@
                      '{io.github.slagyr/isaac      {:local/root "../isaac"}
                        io.github.slagyr/isaac-spec {:local/root "../isaac/spec"}}
                      '{io.github.slagyr/isaac      {:git/url "https://github.com/slagyr/isaac.git"
-                                                    :git/sha "5283346a0c92c53a70ba36184e359d77ffacb921"}
+                                                    :git/sha "b84f141b9abd13055b670b522acaf3f43a518f24"}
                        io.github.slagyr/isaac-spec {:git/url   "https://github.com/slagyr/isaac.git"
-                                                    :git/sha   "5283346a0c92c53a70ba36184e359d77ffacb921"
+                                                    :git/sha   "b84f141b9abd13055b670b522acaf3f43a518f24"
                                                     :deps/root "spec"}})}))
 
   spec     {:doc      "Run ACP specs"
