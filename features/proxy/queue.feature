@@ -1,83 +1,118 @@
 @wip
 Feature: ACP proxy client-side prompt queue
-  When the user sends a prompt while the session has a turn in flight,
-  the isaac-acp proxy (the `isaac chat --remote` / `isaac acp --remote`
-  process bridging stdio ↔ remote WebSocket) holds the new prompt
-  locally on a per-session FIFO queue instead of forwarding to the
-  server (which would silently refuse it). The proxy synthesizes a
-  thought-chunk `session/update` so the client UI (Toad et al.) shows
-  the queued state. When the in-flight turn's `stopReason: end_turn`
-  arrives, the proxy automatically pops the next queued prompt and
-  forwards it as a real `session/prompt`.
-
-  Queue cap: 10 prompts per session. Past the cap, new prompts are
-  rejected with a distinct thought chunk and not queued.
-
-  Cancellation: first `session/cancel` cancels the in-flight turn
-  (forwarded to server as today). A second `session/cancel` arriving
-  while the queue still has prompts clears the queue locally with
-  a thought-chunk acknowledgement.
+  When a user sends a session/prompt while the previous turn is still
+  in flight, the isaac-acp proxy parks the new prompt on a per-session
+  FIFO queue locally and emits an agent_thought_chunk so the UI shows
+  a "queued" state. When the in-flight turn's stopReason: end_turn
+  arrives, the proxy automatically pops and forwards the next queued
+  prompt. Queue cap: 10. Double session/cancel clears the queue
+  locally.
 
   Background:
     Given default Grover setup
-    And the ACP commands are registered
+    And config:
+      | key                 | value    | #comment                            |
+      | acp.proxy-transport | loopback | in-memory, supports the holds dance |
+      | log.output          | memory   |                                     |
+    And the following sessions exist:
+      | name       |
+      | tidy-comet |
 
-  Scenario: A prompt sent while the session is in-flight is queued locally
-    Given a session "tidy-comet" with a turn currently in flight
-    When stdin sends a session/prompt for "tidy-comet" with text "do the next thing"
-    Then no session/prompt frame is forwarded to the server
-    And the stdout has a JSON-RPC notification matching:
-      | key                            | value                         |
-      | method                         | session/update                |
-      | params.sessionId               | tidy-comet                    |
-      | params.update.sessionUpdate    | agent_thought_chunk           |
-      | params.update.content.text     | #"(?i).*queued.*"             |
-    When the server emits a stopReason "end_turn" for "tidy-comet"
-    Then the proxy forwards the queued session/prompt to the server
-    And the forwarded prompt's params.prompt[0].text is "do the next thing"
+  Scenario: A prompt sent while the previous turn is in-flight is queued and drains on end_turn
+    Given the loopback holds the final response
+    And stdin is:
+      """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+      {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"first prompt"}]}}
+      {"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"do the next thing"}]}}
+      """
+    When isaac is run with "acp --remote ws://test/acp"
+    Then the log has entries matching:
+      | level  | event                       | session    | #comment                          |
+      | :debug | :acp-proxy/prompt-forwarded | tidy-comet | first prompt forwarded            |
+      | :info  | :acp-proxy/prompt-queued    | tidy-comet | second is held back               |
+    And the stdout lines contain in order:
+      | pattern                            | #comment                                |
+      | "sessionUpdate":"agent_thought_chunk" | the user-visible "queued" notification |
+      | (?i)queued                         |                                         |
+    When the loopback releases the final response
+    Then the log has entries matching:
+      | level  | event                       | session    | #comment                              |
+      | :debug | :acp-proxy/prompt-forwarded | tidy-comet | queued prompt drains after end_turn   |
+    And the exit code is 0
 
   Scenario: Multiple queued prompts drain in FIFO order
-    Given a session "tidy-comet" with a turn currently in flight
-    When stdin sends a session/prompt for "tidy-comet" with text "first queued"
-    And stdin sends a session/prompt for "tidy-comet" with text "second queued"
-    And stdin sends a session/prompt for "tidy-comet" with text "third queued"
-    Then 3 agent_thought_chunk notifications are written to stdout
-    And no session/prompt frame is forwarded to the server
-    When the server emits a stopReason "end_turn" for "tidy-comet"
-    Then the proxy forwards 1 session/prompt to the server
-    And the forwarded prompt's params.prompt[0].text is "first queued"
-    When the server emits a stopReason "end_turn" for "tidy-comet"
-    Then the proxy forwards 1 session/prompt to the server
-    And the forwarded prompt's params.prompt[0].text is "second queued"
-    When the server emits a stopReason "end_turn" for "tidy-comet"
-    Then the proxy forwards 1 session/prompt to the server
-    And the forwarded prompt's params.prompt[0].text is "third queued"
+    Given the loopback holds the final response
+    And stdin is:
+      """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+      {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"first prompt"}]}}
+      {"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue A"}]}}
+      {"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue B"}]}}
+      {"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue C"}]}}
+      """
+    When isaac is run with "acp --remote ws://test/acp"
+    Then the log has entries matching:
+      | level  | event                       | session    | text          |
+      | :debug | :acp-proxy/prompt-forwarded | tidy-comet | first prompt  |
+      | :info  | :acp-proxy/prompt-queued    | tidy-comet | queue A       |
+      | :info  | :acp-proxy/prompt-queued    | tidy-comet | queue B       |
+      | :info  | :acp-proxy/prompt-queued    | tidy-comet | queue C       |
+    When the loopback releases the final response
+    Then the log has entries matching:
+      | level  | event                       | session    | text     | #comment                  |
+      | :debug | :acp-proxy/prompt-forwarded | tidy-comet | queue A  | FIFO: A goes first        |
+      | :debug | :acp-proxy/prompt-forwarded | tidy-comet | queue B  | then B                    |
+      | :debug | :acp-proxy/prompt-forwarded | tidy-comet | queue C  | then C                    |
+    And the exit code is 0
 
-  Scenario: A prompt beyond the queue cap is rejected with a thought chunk
-    Given a session "tidy-comet" with a turn currently in flight
-    And the proxy already has 10 prompts queued for "tidy-comet"
-    When stdin sends a session/prompt for "tidy-comet" with text "one too many"
-    Then no session/prompt frame is forwarded to the server
-    And the proxy still has 10 prompts queued for "tidy-comet"
-    And the stdout has a JSON-RPC notification matching:
-      | key                            | value                                |
-      | method                         | session/update                       |
-      | params.sessionId               | tidy-comet                           |
-      | params.update.sessionUpdate    | agent_thought_chunk                  |
-      | params.update.content.text     | #"(?i).*queue full.*"                |
+  Scenario: A prompt beyond the queue cap is rejected with a "queue full" thought chunk
+    Given the loopback holds the final response
+    And stdin is:
+      """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+      {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"first prompt"}]}}
+      {"jsonrpc":"2.0","id":10,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 01"}]}}
+      {"jsonrpc":"2.0","id":11,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 02"}]}}
+      {"jsonrpc":"2.0","id":12,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 03"}]}}
+      {"jsonrpc":"2.0","id":13,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 04"}]}}
+      {"jsonrpc":"2.0","id":14,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 05"}]}}
+      {"jsonrpc":"2.0","id":15,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 06"}]}}
+      {"jsonrpc":"2.0","id":16,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 07"}]}}
+      {"jsonrpc":"2.0","id":17,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 08"}]}}
+      {"jsonrpc":"2.0","id":18,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 09"}]}}
+      {"jsonrpc":"2.0","id":19,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue 10"}]}}
+      {"jsonrpc":"2.0","id":20,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"one too many"}]}}
+      """
+    When isaac is run with "acp --remote ws://test/acp"
+    Then the log has entries matching:
+      | level  | event                       | session    | #comment                            |
+      | :debug | :acp-proxy/prompt-forwarded | tidy-comet | the original "first" prompt         |
+      | :info  | :acp-proxy/prompt-queued    | tidy-comet | 10x — once per queued prompt        |
+      | :warn  | :acp-proxy/queue-full       | tidy-comet | rejection for the 11th queued prompt |
+    And the stdout lines contain in order:
+      | pattern                          |
+      | (?i)queue full                   |
+    And the exit code is 0
 
-  Scenario: First Esc cancels the in-flight turn; second Esc clears the queue
-    Given a session "tidy-comet" with a turn currently in flight
-    And the proxy already has 3 prompts queued for "tidy-comet"
-    When stdin sends a session/cancel for "tidy-comet"
-    Then the proxy forwards 1 session/cancel to the server
-    And the proxy still has 3 prompts queued for "tidy-comet"
-    When stdin sends a session/cancel for "tidy-comet"
-    Then no session/cancel frame is forwarded to the server
-    And the proxy has 0 prompts queued for "tidy-comet"
-    And the stdout has a JSON-RPC notification matching:
-      | key                            | value                                  |
-      | method                         | session/update                         |
-      | params.sessionId               | tidy-comet                             |
-      | params.update.sessionUpdate    | agent_thought_chunk                    |
-      | params.update.content.text     | #"(?i).*queue cleared.*"               |
+  Scenario: First session/cancel cancels the in-flight turn; the next session/cancel clears the queue
+    Given the loopback holds the final response
+    And stdin is:
+      """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+      {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"first prompt"}]}}
+      {"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue A"}]}}
+      {"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue B"}]}}
+      {"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"tidy-comet","prompt":[{"type":"text","text":"queue C"}]}}
+      {"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"tidy-comet"}}
+      {"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"tidy-comet"}}
+      """
+    When isaac is run with "acp --remote ws://test/acp"
+    Then the log has entries matching:
+      | level  | event                        | session    | #comment                          |
+      | :debug | :acp-proxy/cancel-forwarded  | tidy-comet | 1st cancel hits the live turn     |
+      | :info  | :acp-proxy/queue-cleared     | tidy-comet | 2nd cancel clears 3 queued prompts |
+    And the stdout lines contain in order:
+      | pattern                          |
+      | (?i)queue cleared                |
+    And the exit code is 0
