@@ -84,15 +84,15 @@
       (jrpc/write-message! *out* result))))
 
 (defn- session-store []
-  (or (system/get :session-store)
+  (or (nexus/get :session-store)
       (store/registered-store)
-      (store/create (system/get :state-dir))))
+      (store/create (nexus/get :state-dir))))
 
 (defn- session-exists? [session-key]
   (some? (store/get-transcript (session-store) session-key)))
 
 (defn- find-most-recent-session [crew-id]
-  (when (system/get :state-dir)
+  (when (nexus/get :state-dir)
     (->> (store/list-sessions-by-agent (session-store) crew-id)
          (sort-by :updated-at)
          last)))
