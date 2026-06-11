@@ -74,7 +74,10 @@
                                  :toolCallId    "tc-1"
                                  :title         "exec: echo hi"
                                  :kind          "execute"
-                                 :rawInput      {:command "echo hi"}}]]
+                                 :rawInput      {:command "echo hi"}
+                                 :content       [{:type    "content"
+                                                  :content {:type "text"
+                                                            :text (pr-str {:command "echo hi"})}}]}]]
                  @calls))))
 
   (it "preserves whitespace-bearing text chunks in session/update notifications"
