@@ -4,6 +4,7 @@
     (java.util.concurrent LinkedBlockingQueue TimeUnit))
   (:require
     [clojure.edn :as edn]
+    [clojure.java.io :as io]
     [clojure.string :as str]
     [cheshire.core :as json]
     [gherclj.core :as g :refer [defgiven defwhen defthen helper!]]
@@ -21,6 +22,7 @@
     [isaac.llm.http :as llm-http]
     [isaac.main :as main]
     [isaac.nexus :as nexus]
+    [isaac.session.session-steps :as session-steps]
     [isaac.step-tables :as match]
     [ring.util.codec :as codec]))
 
@@ -46,13 +48,19 @@
 ;; calls us right before main/run — after the Background's `config:` step has
 ;; set :server-config but before any extra-opts get computed.
 (defn- acp-isaac-run-preflight! []
-  (when (= "loopback" (get-in (g/get :server-config) [:acp :proxy-transport]))
-    (when (nil? (g/get :acp-remote-connection-factory))
+  (let [root       (g/get :root)
+        root-home  (when (and root (str/ends-with? root "/.isaac"))
+                     (fs/parent root))
+        loopback?  (= "loopback" (get-in (g/get :server-config) [:acp :proxy-transport]))]
+    (when (and loopback? (nil? (g/get :acp-remote-connection-factory)))
       (ensure-loopback-proxy!))
     (g/update! :main-extra-opts
-               #(merge (or % {})
-                       {:ws-connection-factory  (g/get :acp-remote-connection-factory)
-                        :acp-proxy-eof-grace-ms 0}))))
+               (fn [opts]
+                 (cond-> (or opts {})
+                   root      (assoc :state-dir root)
+                   root-home (assoc :home root-home)
+                   loopback? (merge {:ws-connection-factory  (g/get :acp-remote-connection-factory)
+                                     :acp-proxy-eof-grace-ms 0}))))))
 
 (cli-steps/register-isaac-run-preflight! acp-isaac-run-preflight!)
 
@@ -60,6 +68,18 @@
   (codec/form-decode (or query-string "")))
 
 (def ^:private await-timeout-ms 3000)
+
+(defn- absolute-path [path]
+  (if (str/starts-with? path "/")
+    path
+    (str (System/getProperty "user.dir") "/" path)))
+
+(defn- isaac-home-root [home]
+  (str (absolute-path home) "/.isaac"))
+
+(defn- effective-state-dir []
+  (or (g/get :state-dir)
+      (g/get :root)))
 
 (defn- close-loopback! []
   (when-let [client (g/get :acp-loopback-client)]
@@ -169,7 +189,7 @@
 
 (defn- dispatch-message! [message async?]
   (let [line          (json/generate-string message)
-        state-dir     (g/get :state-dir)
+        state-dir     (effective-state-dir)
         live-writer   (when state-dir (StringWriter.))
         mem-fs        (g/get :mem-fs)
         llm-http-stub (g/get :llm-http-stub)
@@ -192,7 +212,7 @@
                                                                            :output-writer    writer}
                                                                     agents (assoc :crew-members agents)
                                                                     models (assoc :models models)
-                                                                    (and (nil? agents) (nil? models)) (assoc :cfg (:config (config/load-config-result {:state-dir state-dir}))))
+                                                                    (and (nil? agents) (nil? models)) (assoc :cfg (:config (config/load-config-result {:root state-dir}))))
                                                                   line)]
                             (enqueue-output-lines! writer)
                             (record-dispatch-result! result))
@@ -284,7 +304,7 @@
         query       (query-params (:query-string request))
         agent-id    (or (get query "crew") (get query "agent") "main")
         cfg         (when (and state-dir (nil? agents) (nil? models))
-                      (:config (config/load-config-result {:state-dir state-dir})))]
+                      (:config (config/load-config-result {:root state-dir})))]
     {:request     {:headers      {"x-forwarded-for" "loopback"}
                    :query-string (:query-string request)
                    :uri          "/acp"}
@@ -364,7 +384,7 @@
                            (let [t (ws/reconnectable-loopback)]
                              (g/assoc! :acp-reconnectable-loopback t)
                              t))
-        state-dir      (g/get :state-dir)
+        state-dir      (effective-state-dir)
         agents         (g/get :agents)
         models         (g/get :models)
         provider-cfgs  (g/get :provider-configs)
@@ -483,7 +503,7 @@
         output-writer  (StringWriter.)
         error-writer   (StringWriter.)
         argv           (parse-argv args)
-        state-dir      (g/get :state-dir)
+        state-dir      (effective-state-dir)
         provider-cfgs  (g/get :provider-configs)
         mem-fs         (g/get :mem-fs)
         cfg            (or (g/get :server-config) {})
@@ -540,6 +560,37 @@
   (g/assoc! :loopback-hold-final-response? false)
   (when-let [release* (g/get :loopback-final-response-release)]
     (deliver release* :ok)))
+
+(defn isaac-home-contains-config [home doc-string]
+  (let [abs-home    (absolute-path home)
+        root        (isaac-home-root home)
+        config-dir  (str root "/config")
+        config-file (str config-dir "/isaac.edn")]
+    (if-let [mem-fs (g/get :mem-fs)]
+      (nexus/-with-nested-nexus {:fs mem-fs}
+        (fs/mkdirs mem-fs config-dir)
+        (fs/spit mem-fs config-file (str/trim doc-string)))
+      (do
+        (.mkdirs (io/file config-dir))
+        (spit config-file (str/trim doc-string))))
+    (g/assoc! :root root)
+    (g/update! :main-extra-opts #(merge (or % {}) {:home abs-home}))))
+
+(defn isaac-home-has-no-config [home]
+  (let [abs-home    (absolute-path home)
+        root        (isaac-home-root home)
+        config-file (str root "/config/isaac.edn")]
+    (if-let [mem-fs (g/get :mem-fs)]
+      (nexus/-with-nested-nexus {:fs mem-fs}
+        (when (fs/exists? mem-fs config-file)
+          (fs/delete mem-fs config-file))
+        (fs/mkdirs mem-fs root))
+      (do
+        (when (.exists (io/file config-file))
+          (.delete (io/file config-file)))
+        (.mkdirs (io/file root))))
+    (g/assoc! :root root)
+    (g/update! :main-extra-opts #(merge (or % {}) {:home abs-home}))))
 
 (defn output-contains-json-rpc-response [id table]
   (let [response (await-output-response id)]
@@ -624,5 +675,20 @@
 (defgiven "the ACP commands are registered" isaac.comm.acp.acp-steps/acp-commands-registered
   "No-op step that forces gherclj to load ACP step namespaces so command
    registration and isaac-run preflights are installed for CLI features.")
+
+(defgiven "an in-memory Isaac state directory {path:string}" isaac.session.session-steps/in-memory-state
+  "Compatibility route for older ACP features that still refer to an
+   'in-memory Isaac state directory'. The current Isaac test harness
+   calls this an 'Isaac root'.")
+
+(defgiven "isaac home {home:string} contains config:" isaac.comm.acp.acp-steps/isaac-home-contains-config
+  "Compatibility shim for ACP features that still model config under
+   <home>/.isaac. Writes the config there, sets :root to <home>/.isaac
+   for shared session/store helpers, and injects :home via :main-extra-opts.")
+
+(defgiven "isaac home {home:string} has no config file" isaac.comm.acp.acp-steps/isaac-home-has-no-config
+  "Compatibility shim for ACP features that still refer to an Isaac home
+   rather than a root. Ensures <home>/.isaac exists without config and
+   passes :home through main/*extra-opts* for the CLI under test.")
 
 ;; endregion ^^^^^ Step routing ^^^^^

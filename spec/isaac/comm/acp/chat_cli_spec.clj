@@ -1096,7 +1096,7 @@
                                            {:model "test" :soul "." :provider (llm-provider/make-provider "ollama" {}) :context-window 32768}))))
         (should= :connection-refused (:error @result))))
 
-    (it "passes the session state directory through provider config"
+    (it "passes the session root through provider config"
       (let [key-str              "agent:main:cli:direct:state-dir-provider"
             _                    (storage/create-session! test-dir key-str)
             captured-provider-cfg (atom nil)
@@ -1117,12 +1117,12 @@
                                                          :model   "echo"})]
           (with-out-str
             (dispatch-turn! key-str "hello"
-                            {:config {:state-dir test-dir}
+                            {:config {:root test-dir}
                              :model "echo"
                              :soul "You are Isaac."
                              :provider (llm-provider/make-provider "chatgpt" provider-cfg)
                              :context-window 32768})))
-        (should= test-dir (:state-dir @captured-provider-cfg))))
+        (should= test-dir (:root @captured-provider-cfg))))
 
     (it "rejects a turn when the session crew is unknown"
       (let [key-str       "agent:main:cli:direct:unknown-crew"

@@ -145,21 +145,24 @@
       (let [captured (atom nil)]
         (g/reset!)
         (session-steps/default-grover-setup)
-        (cli-steps/isaac-home-has-no-config "target/test-home")
+        (acp-steps/isaac-home-has-no-config "target/test-home")
         (with-redefs [main/run (fn [_]
                                  (reset! captured main/*extra-opts*)
                                  0)]
           (cli-steps/isaac-run "acp"))
         (should= (str (System/getProperty "user.dir") "/target/test-home")
                  (:home @captured))
-        (should-be-nil (:state-dir @captured))
+        (should= (str (System/getProperty "user.dir") "/target/test-home/.isaac")
+                 (:root @captured))
+        (should= (str (System/getProperty "user.dir") "/target/test-home/.isaac")
+                 (:state-dir @captured))
         (should= (system/get :fs) (:fs @captured))))
 
     (it "reports missing config through the shared CLI feature steps"
       (g/reset!)
       (session-steps/default-grover-setup)
       (acp-steps/acp-commands-registered)
-      (cli-steps/isaac-home-has-no-config "target/test-home")
+      (acp-steps/isaac-home-has-no-config "target/test-home")
       (cli-steps/stdin-is "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1}}")
       (cli-steps/isaac-run "acp")
       (should= 1 (g/get :exit-code))
@@ -169,7 +172,7 @@
       (g/reset!)
       (session-steps/default-grover-setup)
       (acp-steps/acp-commands-registered)
-      (cli-steps/isaac-home-contains-config "target/test-home" "{:crew {:defaults {}}}")
+      (acp-steps/isaac-home-contains-config "target/test-home" "{:crew {:defaults {}}}")
       (session-steps/sessions-exist {:headers ["name"] :rows [["no-model"]]})
       (cli-steps/stdin-is (str "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1}}\n"
                                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"no-model\",\"prompt\":[{\"type\":\"text\",\"text\":\"hi\"}]}}"))

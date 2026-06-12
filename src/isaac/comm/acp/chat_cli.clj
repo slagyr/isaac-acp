@@ -59,11 +59,11 @@
 (defn- state-dir [opts]
   (or (:state-dir opts)
       (:root opts)
-      (:home opts)
+      (some-> (:home opts) (str "/.isaac"))
       (root/current-root)))
 
 (defn- missing-local-config? [opts]
-  (let [result (config/load-config-result {:state-dir (state-dir opts)})]
+  (let [result (config/load-config-result {:root (state-dir opts)})]
     (when (:missing-config? result)
       (print-error! (get-in result [:errors 0 :value]))
       true)))
