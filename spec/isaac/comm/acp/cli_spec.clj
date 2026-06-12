@@ -9,16 +9,17 @@
     [isaac.comm.acp.cli :as sut]
     [isaac.root :as home]
     [isaac.util.jsonrpc :as jrpc]
-    [isaac.util.jsonrpc.dispatch :as dispatch]
+    [isaac.util.jsonrpc :as dispatch]
     [isaac.util.ws-client :as ws]
-    [isaac.cli :as registry]
+    [isaac.cli.registry :as registry]
     [isaac.logger :as log]
     [isaac.fs :as fs]
     [isaac.main :as main]
-    [isaac.scheduler :as scheduler]
-    [isaac.server.cli.cli-steps :as cli-steps]
+    [isaac.scheduler.runtime :as scheduler]
+    [isaac.foundation.cli-steps :as cli-steps]
     [isaac.session.session-steps :as session-steps]
     [isaac.spec-helper :as helper]
+    [isaac.session.spec-helper :as session-helper]
     [isaac.system :as system]
     [speclj.core :refer :all])
   (:import
@@ -78,7 +79,7 @@
   #_{:clj-kondo/ignore [:invalid-arity]}
   (around [it]
     (system/with-system {:config (atom nil)}
-      (helper/with-memory-store (mem-run it))))
+      (session-helper/with-memory-store (mem-run it))))
 
   (it "fails clearly when local config is missing"
     (let [{:keys [stderr exit]} (run-with-stdin "" {:home "/test/no-config"})]
@@ -112,7 +113,7 @@
           session-id "no-model"]
       (delete-tree! home-dir)
       (write-config! home-dir {:crew {:defaults {}}})
-      (helper/create-session! state-dir session-id)
+      (session-helper/create-session! state-dir session-id)
       (let [{:keys [output exit]}
             (run-main! ["acp" "--session" session-id]
                        {:home  home-dir
@@ -128,7 +129,7 @@
             state-dir  "/test/acp-state/.isaac"
             session-id "no-model"]
         (write-config! home-dir {:crew {:defaults {}}})
-        (helper/create-session! state-dir session-id)
+        (session-helper/create-session! state-dir session-id)
         (let [{:keys [output exit]}
               (run-main! ["acp" "--session" session-id]
                          {:home  home-dir
@@ -222,7 +223,7 @@
   (it "returns the attached session key for session/new when --session exists"
     (let [state-dir    (str "/test/acp-attached-" (random-uuid))
           session-key  "user1"
-          _            (helper/create-session! state-dir session-key)
+          _            (session-helper/create-session! state-dir session-key)
           request      (jrpc/request-line 1 "session/new" {})
           {:keys [output exit]} (run-with-stdin request (assoc base-opts :state-dir state-dir :session session-key))]
       (should= 0 exit)
@@ -287,10 +288,10 @@
     (let [state-dir    (str "/test/acp-resume-" (random-uuid))
           older        "older"
           recent       "recent"
-          _            (helper/create-session! state-dir older)
-          _            (helper/create-session! state-dir recent)
-          _            (helper/update-session! state-dir older {:updated-at "2026-04-10T10:00:00"})
-          _            (helper/update-session! state-dir recent {:updated-at "2026-04-12T15:00:00"})
+          _            (session-helper/create-session! state-dir older)
+          _            (session-helper/create-session! state-dir recent)
+          _            (session-helper/update-session! state-dir older {:updated-at "2026-04-10T10:00:00"})
+          _            (session-helper/update-session! state-dir recent {:updated-at "2026-04-12T15:00:00"})
           request      (jrpc/request-line 1 "session/new" {})
           {:keys [output exit]} (run-with-stdin request (assoc base-opts :state-dir state-dir :resume true))]
       (should= 0 exit)
@@ -436,7 +437,7 @@
           state-dir (str "/test/acp-proxy-status-" (random-uuid))
           request-1 (jrpc/request-line 1 "initialize" {:protocolVersion 1})
           request-2 (jrpc/request-line 2 "initialize" {:protocolVersion 1})
-          _         (helper/create-session! state-dir "s1")
+          _         (session-helper/create-session! state-dir "s1")
           runner*   (future
                       (run-with-stdin (str request-1 request-2)
                                       (assoc base-opts

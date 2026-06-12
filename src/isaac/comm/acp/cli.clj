@@ -4,18 +4,19 @@
     [cheshire.core :as json]
     [clojure.tools.cli :as tools-cli]
     [clojure.string :as str]
-    [isaac.cli :as registry]
+    [isaac.cli.registry :as registry]
     [isaac.comm.acp :as acp]
     [isaac.comm.acp.cli.queue :as queue]
     [isaac.comm.acp.server :as server]
     [isaac.util.jsonrpc :as jrpc]
-    [isaac.util.jsonrpc.dispatch :as dispatch]
+    [isaac.util.jsonrpc :as dispatch]
     [isaac.util.ws-client :as ws]
     [isaac.config.loader :as config]
+    [isaac.config.resolve :as config-resolve]
     [isaac.logger :as log]
-    [isaac.scheduler :as scheduler]
+    [isaac.scheduler.runtime :as scheduler]
     [isaac.nexus :as nexus]
-    [isaac.session.store :as store]
+    [isaac.session.store.spi :as store]
     [isaac.tool.builtin :as builtin]))
 
 (def option-spec
@@ -49,7 +50,7 @@
     (let [cfg          (:cfg server-opts)
           named-models (:models (config/normalize-config cfg))]
       (boolean (or (get named-models model-alias)
-                    (config/parse-model-ref model-alias))))))
+                    (config-resolve/parse-model-ref model-alias))))))
 
 (defn- build-server-opts [opts]
   (let [home         (home-dir opts)
@@ -600,7 +601,7 @@
 (defn make-command
   "Factory used by the module loader's :cli extension kind. Returns the
    full command spec including :name; the loader registers it via
-   isaac.cli/register-module-command!."
+   isaac.cli.registry/register-module-command!."
   []
   {:name        "acp"
    :usage       "acp [options]"

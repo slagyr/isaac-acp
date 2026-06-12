@@ -2,7 +2,7 @@
   (:require
     [cheshire.core :as json]
     [clojure.string :as str]
-    [isaac.comm :as comm]
+    [isaac.comm.protocol :as comm]
     [isaac.comm.acp :as sut]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.fs :as fs]
@@ -24,7 +24,7 @@
     (system/with-system {:fs (fs/real-fs)}
       (binding [registry/*registry* (atom (registry/fresh-registry))
                 routes/*registry*    (atom (routes/fresh-registry))]
-        (let [module-index (merge (module-loader/core-index)
+        (let [module-index (merge (module-loader/builtin-index)
                                   {:isaac.comm.acp
                                    {:manifest {:id                 :isaac.comm.acp
                                                :version            "0.1.0"

@@ -8,12 +8,12 @@
     [clojure.string :as str]
     [cheshire.core :as json]
     [gherclj.core :as g :refer [defgiven defwhen defthen helper!]]
-    [isaac.cli :as cli-registry]
+    [isaac.cli.registry :as cli-registry]
     [isaac.comm.acp.chat-cli :as chat-cli]
     [isaac.comm.acp.cli :as acp-cli]
-    [isaac.server.cli.cli-steps :as cli-steps]
+    [isaac.foundation.cli-steps :as cli-steps]
     [isaac.comm.acp.server :as acp-server]
-    [isaac.util.jsonrpc.dispatch :as dispatch]
+    [isaac.util.jsonrpc :as dispatch]
     [isaac.comm.acp.websocket :as acp-websocket]
     [isaac.util.ws-client :as ws]
     [isaac.config.loader :as config]
@@ -676,7 +676,7 @@
   "No-op step that forces gherclj to load ACP step namespaces so command
    registration and isaac-run preflights are installed for CLI features.")
 
-(defgiven "an in-memory Isaac state directory {path:string}" isaac.session.session-steps/in-memory-state
+(defgiven "an in-memory Isaac state directory {path:string}" isaac.foundation.root-steps/in-memory-state
   "Compatibility route for older ACP features that still refer to an
    'in-memory Isaac state directory'. The current Isaac test harness
    calls this an 'Isaac root'.")

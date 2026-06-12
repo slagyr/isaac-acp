@@ -1,7 +1,12 @@
 {:paths ["src" "spec"]
 
- :deps  {io.github.slagyr/gherclj {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
-         speclj/speclj            {:mvn/version "3.13.0"}}
+ ;; apron + clout pinned to match isaac's bb.edn — transitive resolution
+ ;; otherwise picks apron 2.5.0 (via gherclj) and clout 2.2.1 (via
+ ;; c3kit-wire), whose instaparse dependency does not load under bb.
+ :deps  {clout/clout                 {:mvn/version "1.1.0"}
+         com.cleancoders.c3kit/apron {:mvn/version "3.0.0"}
+         io.github.slagyr/gherclj    {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
+         speclj/speclj               {:mvn/version "3.13.0"}}
 
  ;; bb tasks auto-detect isaac: a sibling ../isaac checkout (so cross-repo
  ;; edits land without pushing) when present, otherwise the pinned git sha
@@ -20,9 +25,9 @@
                      '{io.github.slagyr/isaac      {:local/root "../isaac"}
                        io.github.slagyr/isaac-spec {:local/root "../isaac/spec"}}
                      '{io.github.slagyr/isaac      {:git/url "https://github.com/slagyr/isaac.git"
-                                                    :git/sha "b84f141b9abd13055b670b522acaf3f43a518f24"}
+                                                    :git/sha "fd390082730aede923682b32a850d3ad59d2c774"}
                        io.github.slagyr/isaac-spec {:git/url   "https://github.com/slagyr/isaac.git"
-                                                    :git/sha   "b84f141b9abd13055b670b522acaf3f43a518f24"
+                                                    :git/sha   "fd390082730aede923682b32a850d3ad59d2c774"
                                                     :deps/root "spec"}})}))
 
   spec     {:doc      "Run ACP specs"

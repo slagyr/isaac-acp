@@ -2,24 +2,25 @@
   (:require
     [cheshire.core :as json]
     [clojure.java.io :as io]
-    [isaac.cli :as registry]
+    [isaac.cli.registry :as registry]
     [isaac.comm.acp.chat-cli :as sut]
     [isaac.bridge.core :as bridge]
-    [isaac.comm :as comm]
+    [isaac.comm.protocol :as comm]
     [isaac.config.loader :as config]
     [isaac.drive.dispatch :as dispatch]
     [isaac.drive.turn :as single-turn]
     [isaac.llm.api.messages :as anthropic]
-    [isaac.llm.api :as api]
+    [isaac.llm.api.protocol :as api]
     [isaac.llm.provider :as llm-provider]
     [isaac.llm.api.ollama :as ollama]
     [isaac.llm.api.chat-completions :as chat-completions]
     [isaac.llm.providers :as providers]
     [isaac.llm.tool-loop :as tool-loop]
     [isaac.logger :as log]
-    [isaac.session.store :as store]
+    [isaac.session.store.spi :as store]
     [isaac.session.compaction :as compaction]
     [isaac.spec-helper :as storage]
+    [isaac.session.spec-helper :as session-helper]
     isaac.server.routes
     isaac.slash.registry
     [isaac.tool.registry :as tool-registry]
@@ -53,7 +54,7 @@
 (describe "CLI Chat"
 
   (after (single-turn/clear-async-compactions!))
-  (around [it] (storage/with-memory-store (system/with-system {:state-dir test-dir :fs (fs/mem-fs)} (it))))
+  (around [it] (session-helper/with-memory-store (system/with-system {:state-dir test-dir :fs (fs/mem-fs)} (it))))
 
   (describe "run"
 
@@ -296,16 +297,16 @@
 
   (describe "process-response!"
 
-    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
+    (around [it] (session-helper/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
     (storage/with-captured-logs)
 
     (it "appends assistant message and updates tokens on success"
       (let [key-str "testuser"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             result  {:content  "I can help!"
                      :response {:usage {:input-tokens 50 :output-tokens 20}}}]
         (single-turn/process-response! key-str result {:model "qwen:7b" :provider "ollama"})
-        (let [transcript (storage/get-transcript test-dir key-str)
+        (let [transcript (session-helper/get-transcript test-dir key-str)
               messages   (filter #(= "message" (:type %)) transcript)
               last-msg   (last messages)]
           (should= "assistant" (get-in last-msg [:message :role]))
@@ -314,22 +315,22 @@
 
     (it "updates last-input-tokens from the latest response usage"
       (let [key-str "agent:main:cli:direct:last-input"
-            _       (storage/create-session! test-dir key-str)
-            _       (storage/update-tokens! test-dir key-str {:input-tokens 10 :output-tokens 5})
+            _       (session-helper/create-session! test-dir key-str)
+            _       (session-helper/update-tokens! test-dir key-str {:input-tokens 10 :output-tokens 5})
             result  {:content  "Hello!"
                      :response {:usage {:input-tokens 42 :output-tokens 5}}}]
         (single-turn/process-response! key-str result {:model "qwen:7b" :provider "ollama"})
-        (let [entry (storage/get-session test-dir key-str)]
+        (let [entry (session-helper/get-session test-dir key-str)]
           (should= 42 (:last-input-tokens entry)))))
 
     (it "accumulates response usage onto the existing session counters"
       (let [key-str "agent:main:cli:direct:token-accumulation"
-            _       (storage/create-session! test-dir key-str)
-            _       (storage/update-tokens! test-dir key-str {:input-tokens 10 :output-tokens 5 :cache-read 3 :cache-write 2})
+            _       (session-helper/create-session! test-dir key-str)
+            _       (session-helper/update-tokens! test-dir key-str {:input-tokens 10 :output-tokens 5 :cache-read 3 :cache-write 2})
             result  {:content  "Hello again!"
                      :response {:usage {:input-tokens 42 :output-tokens 5 :cache-read 7 :cache-write 11}}}]
         (single-turn/process-response! key-str result {:model "qwen:7b" :provider "ollama"})
-        (let [entry (storage/get-session test-dir key-str)]
+        (let [entry (session-helper/get-session test-dir key-str)]
           (should= 52 (:input-tokens entry))
           (should= 10 (:output-tokens entry))
           (should= 62 (:total-tokens entry))
@@ -339,23 +340,23 @@
 
     (it "stores the provider-returned model in the transcript"
       (let [key-str "agent:main:cli:direct:model-test"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             result  {:content  "Hello!"
                      :response {:model "gpt-5-20250714"
                                 :usage {:input-tokens 10 :output-tokens 5}}}]
         (single-turn/process-response! key-str result {:model "gpt-5" :provider "openai"})
-        (let [transcript (storage/get-transcript test-dir key-str)
+        (let [transcript (session-helper/get-transcript test-dir key-str)
               messages   (filter #(= "message" (:type %)) transcript)
               last-msg   (last messages)]
           (should= "gpt-5-20250714" (get-in last-msg [:message :model])))))
 
     (it "falls back to configured model when provider returns no model"
       (let [key-str "agent:main:cli:direct:fallback-test"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             result  {:content  "Hello!"
                      :response {:usage {:input-tokens 10 :output-tokens 5}}}]
         (single-turn/process-response! key-str result {:model "qwen:7b" :provider "ollama"})
-        (let [transcript (storage/get-transcript test-dir key-str)
+        (let [transcript (session-helper/get-transcript test-dir key-str)
               messages   (filter #(= "message" (:type %)) transcript)
               last-msg   (last messages)]
           (should= "qwen:7b" (get-in last-msg [:message :model])))))
@@ -369,11 +370,11 @@
 
     (it "records error entries in transcript when llm call fails"
       (let [key-str "agent:main:cli:direct:error-test"
-            _      (storage/create-session! test-dir key-str)
+            _      (session-helper/create-session! test-dir key-str)
             _      (single-turn/process-response! key-str
                                            {:error :connection-refused :message "refused"}
                                            {:model "qwen:7b" :provider "ollama"})
-            transcript (storage/get-transcript test-dir key-str)
+            transcript (session-helper/get-transcript test-dir key-str)
             last-entry (last transcript)]
         (should= "error" (:type last-entry))
         (should= ":connection-refused" (:error last-entry))
@@ -401,7 +402,7 @@
 
     (it "returns nil on success"
       (let [key-str "agent:main:cli:direct:success-ret"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             result  (single-turn/process-response! key-str
                                            {:content "Hello!" :response {:usage {:input-tokens 5 :output-tokens 3}}}
                                            {:model "m" :provider "p"})]
@@ -419,7 +420,7 @@
 
     (it "logs :session/message-stored at debug with session and model on success"
       (let [key-str "agent:main:cli:direct:log-test"
-            _       (storage/create-session! test-dir key-str)]
+            _       (session-helper/create-session! test-dir key-str)]
         (single-turn/process-response! key-str
                                {:content  "Hello!"
                                 :response {:model "grover" :usage {:input-tokens 10 :output-tokens 5}}}
@@ -434,12 +435,12 @@
 
   (describe "check-compaction!"
 
-    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
+    (around [it] (session-helper/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
     (storage/with-captured-logs)
 
     (it "does not compact when under context window"
       (let [key-str  "agent:main:cli:direct:comptest"
-            _        (storage/create-session! test-dir key-str)
+            _        (session-helper/create-session! test-dir key-str)
             compacted (atom false)]
         (with-redefs [compaction/should-compact? (constantly false)
                       compaction/compact!        (fn [& _] (reset! compacted true))]
@@ -450,7 +451,7 @@
 
     (it "compacts when over context window"
       (let [key-str  "agent:main:cli:direct:comptest2"
-            _        (storage/create-session! test-dir key-str)
+            _        (session-helper/create-session! test-dir key-str)
             compacted (atom false)]
         (with-redefs [compaction/should-compact? (constantly true)
                       compaction/compact!        (fn [& _] (reset! compacted true))]
@@ -477,8 +478,8 @@
 
     (it "logs :session/compaction-check at debug with session, provider, model, total-tokens, context-window"
       (let [key-str "agent:main:cli:direct:checklog"
-            _       (storage/create-session! test-dir key-str)
-            _       (storage/update-tokens! test-dir key-str {:input-tokens 50 :output-tokens 0})]
+            _       (session-helper/create-session! test-dir key-str)
+            _       (session-helper/update-tokens! test-dir key-str {:input-tokens 50 :output-tokens 0})]
         (with-redefs [compaction/should-compact? (constantly false)]
           (single-turn/check-compaction! key-str
                                  {:model "echo" :soul "s" :context-window 100
@@ -494,8 +495,8 @@
 
     (it "logs :session/compaction-started at info when compaction triggers"
       (let [key-str "agent:main:cli:direct:startlog"
-            _       (storage/create-session! test-dir key-str)
-            _       (storage/update-tokens! test-dir key-str {:input-tokens 50 :output-tokens 0})]
+            _       (session-helper/create-session! test-dir key-str)
+            _       (session-helper/update-tokens! test-dir key-str {:input-tokens 50 :output-tokens 0})]
         (with-redefs [compaction/should-compact? (constantly true)
                       compaction/compact!        (fn [& _] nil)]
           (with-out-str
@@ -513,7 +514,7 @@
 
     (it "threads :api through to compaction/compact!"
       (let [key-str  "agent:main:cli:direct:providerpass"
-            _        (storage/create-session! test-dir key-str)
+            _        (session-helper/create-session! test-dir key-str)
             captured (atom nil)]
         (with-redefs [compaction/should-compact? (constantly true)
                       compaction/compact!        (fn [_ opts]
@@ -527,7 +528,7 @@
 
     (it "does not log :session/compaction-started when under threshold"
       (let [key-str "agent:main:cli:direct:nolog"
-            _       (storage/create-session! test-dir key-str)]
+            _       (session-helper/create-session! test-dir key-str)]
         (with-redefs [compaction/should-compact? (constantly false)]
           (single-turn/check-compaction! key-str
                                  {:model "m" :soul "s" :context-window 100
@@ -537,8 +538,8 @@
 
     (it "logs :session/compaction-skipped when compaction is disabled for the session"
       (let [key-str "agent:main:cli:direct:skipdisabled"
-            _       (storage/create-session! test-dir key-str)]
-        (storage/update-session! test-dir key-str {:compaction-disabled true})
+            _       (session-helper/create-session! test-dir key-str)]
+        (session-helper/update-session! test-dir key-str {:compaction-disabled true})
         (single-turn/check-compaction! key-str
                                        {:model "m" :soul "s" :context-window 100
                                         :provider (llm-provider/make-provider "grover" {})})
@@ -554,7 +555,7 @@
 
     (it "logs :session/compaction-failed at error when compact! returns an error"
       (let [key-str "agent:main:cli:direct:faillog"
-            _       (storage/create-session! test-dir key-str)]
+            _       (session-helper/create-session! test-dir key-str)]
         (with-redefs [compaction/should-compact? (constantly true)
                       compaction/compact!        (fn [& _] {:error :llm-error :message "context length exceeded"})]
           (with-out-str
@@ -570,21 +571,21 @@
 
     (it "increments consecutive compaction failures on error"
       (let [key-str "agent:main:cli:direct:failcount"
-            _       (storage/create-session! test-dir key-str)]
-        (storage/update-session! test-dir key-str {:compaction {:consecutive-failures 1}})
+            _       (session-helper/create-session! test-dir key-str)]
+        (session-helper/update-session! test-dir key-str {:compaction {:consecutive-failures 1}})
         (with-redefs [compaction/should-compact? (constantly true)
                       compaction/compact!        (fn [& _] {:error :llm-error :message "context length exceeded"})]
           (with-out-str
             (single-turn/check-compaction! key-str
                                            {:model "m" :soul "s" :context-window 100
                                             :provider (llm-provider/make-provider "grover" {})})))
-        (should= 2 (get-in (storage/get-session test-dir key-str) [:compaction :consecutive-failures]))))
+        (should= 2 (get-in (session-helper/get-session test-dir key-str) [:compaction :consecutive-failures]))))
 
     (it "disables compaction after another failure once the consecutive threshold is reached"
       (let [key-str "agent:main:cli:direct:giveup"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             tried?  (atom false)]
-        (storage/update-session! test-dir key-str {:compaction {:consecutive-failures 5}})
+        (session-helper/update-session! test-dir key-str {:compaction {:consecutive-failures 5}})
         (with-redefs [compaction/should-compact? (constantly true)
                       compaction/compact!        (fn [& _]
                                             (reset! tried? true)
@@ -593,33 +594,33 @@
                                          {:model "m" :soul "s" :context-window 100
                                           :provider (llm-provider/make-provider "grover" {})}))
         (should= true @tried?)
-        (let [session (storage/get-session test-dir key-str)
+        (let [session (session-helper/get-session test-dir key-str)
               entry   (first (filter #(= :session/compaction-stopped (:event %)) @log/captured-logs))]
           (should= true (:compaction-disabled session))
           (should= :too-many-failures (:reason entry)))))
 
     (it "resets consecutive compaction failures after a successful compaction"
       (let [key-str "agent:main:cli:direct:failreset"
-            _       (storage/create-session! test-dir key-str)]
-        (storage/update-session! test-dir key-str {:compaction {:consecutive-failures 3}})
+            _       (session-helper/create-session! test-dir key-str)]
+        (session-helper/update-session! test-dir key-str {:compaction {:consecutive-failures 3}})
         (with-redefs [compaction/should-compact? (constantly true)
                       compaction/compact!        (fn [compact-key _]
-                                            (storage/update-session! test-dir compact-key {:total-tokens 10})
+                                            (session-helper/update-session! test-dir compact-key {:total-tokens 10})
                                             {:type "compaction"})]
           (with-out-str
             (single-turn/check-compaction! key-str
                                            {:model "m" :soul "s" :context-window 100
                                             :provider (llm-provider/make-provider "grover" {})})))
-        (should= 0 (get-in (storage/get-session test-dir key-str) [:compaction :consecutive-failures]))))
+        (should= 0 (get-in (session-helper/get-session test-dir key-str) [:compaction :consecutive-failures]))))
 
     (it "repeats compaction until the session no longer exceeds the context window"
       (let [key-str   "agent:main:cli:direct:repeatloop"
-            _         (storage/create-session! test-dir key-str)
-            _         (storage/update-session! test-dir key-str {:last-input-tokens 62})
+            _         (session-helper/create-session! test-dir key-str)
+            _         (session-helper/update-session! test-dir key-str {:last-input-tokens 62})
             attempts  (atom 0)]
         (with-redefs [compaction/compact! (fn [compact-key _]
                                      (swap! attempts inc)
-                                     (storage/update-session! test-dir compact-key
+                                     (session-helper/update-session! test-dir compact-key
                                                                {:last-input-tokens (case @attempts
                                                                                      1 40
                                                                                      2 20)})
@@ -632,7 +633,7 @@
 
     (it "notifies the channel with compaction-start when compaction triggers"
       (let [key-str       "agent:main:cli:direct:channelatom"
-            _             (storage/create-session! test-dir key-str)
+            _             (session-helper/create-session! test-dir key-str)
             chunks        (atom [])
             mock-channel  (reify comm/Comm
                             (on-turn-start [_ _ _] nil)
@@ -655,7 +656,7 @@
 
     (it "does not notify the channel when compaction does not trigger"
       (let [key-str       "agent:main:cli:direct:nochunk"
-            _             (storage/create-session! test-dir key-str)
+            _             (session-helper/create-session! test-dir key-str)
             chunks        (atom [])
             mock-channel  (reify comm/Comm
                             (on-turn-start [_ _ _] nil)
@@ -677,8 +678,8 @@
 
     (it "starts async compaction in the background when enabled"
       (let [key-str     "agent:main:cli:direct:asyncstart"
-            _           (storage/create-session! test-dir key-str)
-            _           (storage/update-session! test-dir key-str {:compaction {:strategy :slinky :threshold 80 :head 40 :async? true}})
+            _           (session-helper/create-session! test-dir key-str)
+            _           (session-helper/update-session! test-dir key-str {:compaction {:strategy :slinky :threshold 80 :head 40 :async? true}})
             entered?    (promise)
             release!    (promise)
             completed?  (atom false)]
@@ -703,8 +704,8 @@
 
     (it "skips starting a second async compaction while one is in flight"
       (let [key-str    "agent:main:cli:direct:asyncskip"
-            _          (storage/create-session! test-dir key-str)
-            _          (storage/update-session! test-dir key-str {:compaction {:strategy :slinky :threshold 80 :head 40 :async? true}})
+            _          (session-helper/create-session! test-dir key-str)
+            _          (session-helper/update-session! test-dir key-str {:compaction {:strategy :slinky :threshold 80 :head 40 :async? true}})
             attempts   (atom 0)
             entered?   (promise)
             release!   (promise)]
@@ -727,12 +728,12 @@
 
     (it "stops repeated compaction when token usage does not decrease"
       (let [key-str  "agent:main:cli:direct:noprogress"
-            _        (storage/create-session! test-dir key-str)
-            _        (storage/update-session! test-dir key-str {:total-tokens 62})
+            _        (session-helper/create-session! test-dir key-str)
+            _        (session-helper/update-session! test-dir key-str {:total-tokens 62})
             attempts (atom 0)]
         (with-redefs [compaction/compact! (fn [compact-key _]
                                      (swap! attempts inc)
-                                     (storage/update-session! test-dir compact-key {:total-tokens 62})
+                                     (session-helper/update-session! test-dir compact-key {:total-tokens 62})
                                      {:type "compaction"})]
           (with-out-str
             (single-turn/check-compaction! key-str
@@ -800,11 +801,11 @@
 
   (describe "active-tools (via run-turn!)"
 
-    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
+    (around [it] (session-helper/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
 
     (it "streams even when tools are registered"
       (let [key-str       "agent:main:cli:direct:grover-tools"
-             _             (storage/create-session! test-dir key-str)
+             _             (session-helper/create-session! test-dir key-str)
              _             (tool-registry/register! {:name "echo" :description "Echo" :handler (fn [args] (:msg args))})
              tools-called  (atom false)
              stream-called (atom false)]
@@ -828,7 +829,7 @@
 
     (it "filters prompt tools to the crew member allow list"
       (let [key-str          "agent:main:cli:direct:allow-tools"
-            _                (storage/create-session! test-dir key-str)
+            _                (session-helper/create-session! test-dir key-str)
             captured-request (atom nil)]
         (with-redefs [single-turn/check-compaction!         (fn [& _] nil)
                       config/snapshot                      (fn [& _] {:crew {"main" {:tools {:allow [:read :write]}}}})
@@ -862,7 +863,7 @@
 
     (it "omits tools when the crew member has an empty tools allow list"
       (let [key-str       "agent:main:cli:direct:no-tools"
-            _             (storage/create-session! test-dir key-str)
+            _             (session-helper/create-session! test-dir key-str)
             captured-request (atom nil)]
         (with-redefs [single-turn/check-compaction!         (fn [& _] nil)
                       config/snapshot                      (fn [& _] {:crew {"main" {:tools {:allow []}}}})
@@ -898,11 +899,11 @@
 
   (describe "run-turn!"
 
-    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
+    (around [it] (session-helper/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
     (it "sends a cancelled tool update when a tool call is interrupted"
       (let [real-dir  (str (System/getProperty "user.dir") "/target/test-chat-cancel")
             key-str   "agent:main:cli:direct:cancel-tool"
-            _         (storage/create-session! real-dir key-str)
+            _         (session-helper/create-session! real-dir key-str)
             fs*       (system/get :fs)
             store*    (store/registered-store)
             started*  (promise)
@@ -954,15 +955,15 @@
 
   (describe "run-tool-calls!"
 
-    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
+    (around [it] (session-helper/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
 
     (it "stores tool calls and results in the transcript"
       (let [key-str "agent:main:cli:direct:tooltest"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             tool-results [[{:id "tc-1" :name "echo" :type "toolCall" :arguments {:msg "hi"}}
                            "echo result"]]]
         (single-turn/run-tool-calls! key-str tool-results)
-        (let [transcript (storage/get-transcript test-dir key-str)
+        (let [transcript (session-helper/get-transcript test-dir key-str)
               messages   (filter #(= "message" (:type %)) transcript)]
           (should= 2 (count messages))
           (should= "assistant"  (get-in (first messages) [:message :role]))
@@ -970,17 +971,17 @@
 
     (it "marks tool results as errors when tool-fn returns an error string"
       (let [key-str "agent:main:cli:direct:toolerr"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             tool-results [[{:id "tc-1" :name "boom" :type "toolCall" :arguments {}}
                            "Error: something went wrong"]]]
         (single-turn/run-tool-calls! key-str tool-results)
-        (let [transcript (storage/get-transcript test-dir key-str)
+        (let [transcript (session-helper/get-transcript test-dir key-str)
               tool-result (second (filter #(= "message" (:type %)) transcript))]
           (should= true (get-in tool-result [:message :isError])))))
 
     (it "does not log tool pair persistence diagnostics"
       (let [key-str "agent:main:cli:direct:toollogs"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             tool-results [[{:id "tc-1" :name "echo" :type "toolCall" :arguments {:msg "hi"}}
                            "echo result"]]]
         (log/capture-logs
@@ -993,10 +994,10 @@
 
   (describe "run-turn!"
 
-    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
+    (around [it] (session-helper/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
     (it "includes tools in the streaming request when tools are available"
       (let [key-str          "agent:main:cli:direct:tool-user"
-             _                (storage/create-session! test-dir key-str)
+             _                (session-helper/create-session! test-dir key-str)
              captured-request (atom nil)]
         (with-redefs [compaction/should-compact?           (constantly false)
                       tool-registry/tool-definitions (fn
@@ -1019,11 +1020,11 @@
 
     (it "preserves the triggering user message after compaction and completes chat"
       (let [key-str "agent:main:cli:direct:compact-user"
-            _       (storage/create-session! test-dir key-str)
-            _       (storage/append-message! test-dir key-str {:role "user" :content "Please summarize our work"})]
+            _       (session-helper/create-session! test-dir key-str)
+            _       (session-helper/append-message! test-dir key-str {:role "user" :content "Please summarize our work"})]
         (with-redefs [compaction/should-compact?        (constantly true)
                       compaction/compact!               (fn [compact-key _]
-                                                   (storage/append-compaction! test-dir compact-key
+                                                   (session-helper/append-compaction! test-dir compact-key
                                                                              {:summary "Summary of prior chat"
                                                                               :firstKeptEntryId "kept-id"
                                                                               :tokensBefore 95}))
@@ -1038,7 +1039,7 @@
                              :soul "You are Isaac."
                              :provider (llm-provider/make-provider "grover" {})
                              :context-window 100})))
-        (let [transcript (storage/get-transcript test-dir key-str)]
+        (let [transcript (session-helper/get-transcript test-dir key-str)]
           (should= "compaction" (:type (nth transcript 2)))
           (should= "user" (get-in (nth transcript 3) [:message :role]))
           (should= [{:type "text" :text "Can you summarize README.md?"}]
@@ -1048,7 +1049,7 @@
 
     (it "persists responses-api reasoning summary on the stored assistant message"
       (let [key-str      "agent:main:cli:direct:reasoning-summary"
-            _            (storage/create-session! test-dir key-str)
+            _            (session-helper/create-session! test-dir key-str)
             provider-cfg (providers/lookup {:providers {:chatgpt {}}}
                                            nil
                                            "chatgpt")]
@@ -1072,7 +1073,7 @@
                              :soul "Lives in a trash can."
                              :provider (llm-provider/make-provider "chatgpt" provider-cfg)
                              :context-window 128000})))
-        (let [transcript (storage/get-transcript test-dir key-str)
+        (let [transcript (session-helper/get-transcript test-dir key-str)
               assistant  (last (filter #(= "assistant" (get-in % [:message :role])) transcript))]
           (should= "Scram!" (get-in assistant [:message :content]))
           (should= "high" (get-in assistant [:message :reasoning :effort]))
@@ -1086,7 +1087,7 @@
 
     (it "returns error result when LLM call fails"
       (let [key-str "agent:main:cli:direct:err-return"
-            _       (storage/create-session! test-dir key-str)
+            _       (session-helper/create-session! test-dir key-str)
             result  (atom nil)]
         (with-redefs [compaction/should-compact?          (constantly false)
                       tool-registry/tool-definitions (constantly nil)
@@ -1098,7 +1099,7 @@
 
     (it "passes the session root through provider config"
       (let [key-str              "agent:main:cli:direct:state-dir-provider"
-            _                    (storage/create-session! test-dir key-str)
+            _                    (session-helper/create-session! test-dir key-str)
             captured-provider-cfg (atom nil)
             provider-cfg          (providers/lookup {:providers {:chatgpt {}}}
                                                     nil
@@ -1126,7 +1127,7 @@
 
     (it "rejects a turn when the session crew is unknown"
       (let [key-str       "agent:main:cli:direct:unknown-crew"
-            _             (storage/create-session! test-dir key-str {:crew "marvin"})
+            _             (session-helper/create-session! test-dir key-str {:crew "marvin"})
             result        (atom nil)
             output        (atom nil)
             stream-called (atom false)]
@@ -1148,7 +1149,7 @@
         (should-contain "marvin" (:message @result))
         (should-contain "pass --crew to override" (:message @result))
         (should-not @stream-called)
-        (should= [] (filter #(= "message" (:type %)) (storage/get-transcript test-dir key-str)))
+        (should= [] (filter #(= "message" (:type %)) (session-helper/get-transcript test-dir key-str)))
         (let [entry (last @log/captured-logs)]
           (should= :drive/turn-rejected (:event entry))
           (should= key-str (:session entry))
@@ -1157,7 +1158,7 @@
 
     (it "logs accepted turns with the session crew"
       (let [key-str "agent:main:cli:direct:accepted-turn"
-            _       (storage/create-session! test-dir key-str {:crew "main"})]
+            _       (session-helper/create-session! test-dir key-str {:crew "main"})]
         (log/capture-logs
           (with-redefs [compaction/should-compact?            (constantly false)
                         tool-registry/tool-definitions (constantly nil)
@@ -1178,7 +1179,7 @@
 
     (it "prints [tool call: name] to stdout when a tool is called"
       (let [key-str    "agent:main:cli:direct:tool-status-print"
-             _          (storage/create-session! test-dir key-str)
+             _          (session-helper/create-session! test-dir key-str)
              call-count (atom 0)
              output     (atom nil)]
         (with-redefs [compaction/should-compact?           (constantly false)
@@ -1207,7 +1208,7 @@
 
     (it "prints response content to stdout after tool calls complete"
       (let [key-str    "agent:main:cli:direct:tool-content-print"
-             _          (storage/create-session! test-dir key-str)
+             _          (session-helper/create-session! test-dir key-str)
              call-count (atom 0)
              output     (atom nil)]
         (with-redefs [compaction/should-compact?           (constantly false)
@@ -1236,7 +1237,7 @@
 
     (it "asks the LLM for a final no-tools summary when the tool loop hits max iterations"
       (let [key-str      "agent:main:cli:direct:tool-loop-cap"
-            _            (storage/create-session! test-dir key-str)
+            _            (session-helper/create-session! test-dir key-str)
             call-count   (atom 0)
             requests     (atom [])
             provider-cfg (providers/lookup {:providers {:chatgpt {}}}
@@ -1279,7 +1280,7 @@
                              :soul "You are helpful."
                              :provider (llm-provider/make-provider "chatgpt" provider-cfg)
                              :context-window 32768})))
-        (let [messages            (filter #(= "message" (:type %)) (storage/get-transcript test-dir key-str))
+        (let [messages            (filter #(= "message" (:type %)) (session-helper/get-transcript test-dir key-str))
               last-assistant-msg  (last (filter #(= "assistant" (get-in % [:message :role])) messages))
               summary-request     (nth @requests 2)
               summary-instruction (-> summary-request :messages last :content)
@@ -1303,7 +1304,7 @@
 
     (it "falls back to the canned message when the forced summary is still empty"
       (let [key-str      "agent:main:cli:direct:tool-loop-fallback"
-            _            (storage/create-session! test-dir key-str)
+            _            (session-helper/create-session! test-dir key-str)
             call-count   (atom 0)
             requests     (atom [])
             provider-cfg (providers/lookup {:providers {:chatgpt {}}}
@@ -1346,7 +1347,7 @@
                              :soul "You are helpful."
                              :provider (llm-provider/make-provider "chatgpt" provider-cfg)
                              :context-window 32768})))
-        (let [messages           (filter #(= "message" (:type %)) (storage/get-transcript test-dir key-str))
+        (let [messages           (filter #(= "message" (:type %)) (session-helper/get-transcript test-dir key-str))
               last-assistant-msg (last (filter #(= "assistant" (get-in % [:message :role])) messages))
               summary-request    (nth @requests 2)]
           (should= 3 @call-count)
@@ -1356,11 +1357,11 @@
 
   (describe "uncaught exception handling"
 
-    (around [it] (storage/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
+    (around [it] (session-helper/with-memory-store (system/with-nested-system {:fs (fs/mem-fs)} (it))))
 
     (it "appends an error entry to the transcript when an exception is thrown"
       (let [key-str "agent:main:cli:direct:crash-test"
-            _       (storage/create-session! test-dir key-str {:crew "main" :cwd test-dir})]
+            _       (session-helper/create-session! test-dir key-str {:crew "main" :cwd test-dir})]
         (try
           (with-redefs [single-turn/check-compaction!
                         (fn [& _] (throw (ex-info "simulated crash" {:boom true})))]
@@ -1368,7 +1369,7 @@
               (dispatch-turn! key-str "trigger crash"
                               {:model "test" :soul "." :provider (llm-provider/make-provider "grover" {}) :context-window 4096})))
           (catch Exception _))
-        (let [transcript (storage/get-transcript test-dir key-str)
+        (let [transcript (session-helper/get-transcript test-dir key-str)
               error-entry (last (filter #(= "error" (:type %)) transcript))]
           (should-not-be-nil error-entry)
           (should= "simulated crash" (:content error-entry))
@@ -1377,7 +1378,7 @@
 
     (it "still propagates the exception after appending the error"
       (let [key-str "agent:main:cli:direct:rethrow-test"
-            _       (storage/create-session! test-dir key-str {:crew "main" :cwd test-dir})]
+            _       (session-helper/create-session! test-dir key-str {:crew "main" :cwd test-dir})]
         (should-throw
           (with-redefs [single-turn/check-compaction!
                         (fn [& _] (throw (RuntimeException. "boom")))]
@@ -1387,7 +1388,7 @@
 
     (it "transcript ends with error entry so next turn sees balanced user/assistant trail"
       (let [key-str "agent:main:cli:direct:balance-test"
-            _       (storage/create-session! test-dir key-str {:crew "main" :cwd test-dir})]
+            _       (session-helper/create-session! test-dir key-str {:crew "main" :cwd test-dir})]
         (try
           (with-redefs [single-turn/check-compaction!
                         (fn [& _] (throw (ex-info "oops" {})))]
@@ -1395,7 +1396,7 @@
               (dispatch-turn! key-str "user input"
                               {:model "test" :soul "." :provider (llm-provider/make-provider "grover" {}) :context-window 4096})))
           (catch Exception _))
-        (let [transcript (storage/get-transcript test-dir key-str)
+        (let [transcript (session-helper/get-transcript test-dir key-str)
               last-entry  (last transcript)]
           (should= "error" (:type last-entry)))))
 

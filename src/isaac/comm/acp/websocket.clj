@@ -7,9 +7,9 @@
     [isaac.fs :as fs]
     [isaac.logger :as log]
     [isaac.root :as root]
-    [isaac.session.store :as store]
+    [isaac.session.store.spi :as store]
     [isaac.system :as system]
-    [isaac.util.jsonrpc.dispatch :as dispatch]
+    [isaac.util.jsonrpc :as dispatch]
     [org.httpkit.server :as httpkit]
     [ring.util.codec :as codec])
   (:import

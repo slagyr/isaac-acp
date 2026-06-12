@@ -8,11 +8,11 @@
  :isaac.server/route
  [{:method :get :path "/acp" :handler isaac.comm.acp.websocket/handler}]
 
- ;; CLI subcommands contributed via the :cli berth. Each entry directly
+ ;; CLI subcommands contributed via the :isaac/cli berth. Each entry directly
  ;; carries :name / :usage / :desc / :option-spec / :run-fn — symbols get
  ;; requiring-resolve'd at registration time, so :option-spec and :run-fn
  ;; point at vars defined in this module.
- :cli
+ :isaac/cli
  [{:name        "acp"
    :usage       "acp [options]"
    :desc        "Run Isaac as an ACP agent over stdio"

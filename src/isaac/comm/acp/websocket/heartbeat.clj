@@ -24,7 +24,7 @@
     [cheshire.core :as json]
     [isaac.logger :as log]
     [isaac.nexus :as nexus]
-    [isaac.scheduler :as scheduler]
+    [isaac.scheduler.runtime :as scheduler]
     [org.httpkit.server :as httpkit]))
 
 (def default-heartbeat-interval-ms
@@ -73,7 +73,7 @@
    channel mid-iteration doesn't fight with the snapshot.
 
    Accepts (and ignores) an optional run-ctx argument because
-   isaac.scheduler invokes handlers with one map arg — without this
+   isaac.scheduler.runtime invokes handlers with one map arg — without this
    arity the handler throws every tick and no heartbeats actually go
    out, defeating the keepalive."
   ([] (beat-all! nil))

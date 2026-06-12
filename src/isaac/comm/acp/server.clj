@@ -5,14 +5,15 @@
     [isaac.charge :as charge]
     [isaac.comm.acp :as acp-comm]
     [isaac.config.loader :as config]
+    [isaac.config.resolve :as config-resolve]
     [isaac.util.jsonrpc :as jrpc]
-    [isaac.util.jsonrpc.dispatch :as dispatch]
+    [isaac.util.jsonrpc :as dispatch]
     [isaac.drive.turn :as single-turn]
-    [isaac.llm.api :as llm-api]
+    [isaac.llm.api.protocol :as llm-api]
     [isaac.logger :as log]
     [isaac.root :as root]
     [isaac.server.routes]
-    [isaac.session.store :as store]
+    [isaac.session.store.spi :as store]
     [isaac.session.transcript :as message-content]
     [isaac.slash.registry :as slash-registry]
     [isaac.system :as system]))
@@ -92,7 +93,7 @@
 (defn- initialize-handler [opts _params _message]
   (let [{:keys [crew-id crew-members models provider-configs cfg home model-override] :or {crew-id "main"}} opts
         cfg                    (effective-cfg cfg (resolve-crew-members crew-members cfg) (or models {}) (or provider-configs {}))
-        {:keys [model provider]} (config/resolve-crew-context cfg crew-id (cond-> {:home home}
+        {:keys [model provider]} (config-resolve/resolve-crew-context cfg crew-id (cond-> {:home home}
                                                                              model-override (assoc :model-override model-override)))]
     (initialize-result model
                          (when provider

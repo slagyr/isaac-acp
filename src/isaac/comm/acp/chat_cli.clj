@@ -2,7 +2,7 @@
   (:require
     [clojure.string :as str]
     [clojure.tools.cli :as tools-cli]
-    [isaac.cli :as registry]
+    [isaac.cli.registry :as registry]
     [isaac.config.loader :as config]
     [isaac.root :as root]
     [isaac.util.shell :as shell]))
@@ -107,7 +107,7 @@
 (defn make-command
   "Factory used by the module loader's :cli extension kind. Returns the
    full command spec including :name; the loader registers it via
-   isaac.cli/register-module-command!."
+   isaac.cli.registry/register-module-command!."
   []
   {:name        "chat"
    :usage       "chat [options]"

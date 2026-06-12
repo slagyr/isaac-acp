@@ -3,7 +3,7 @@
     [cheshire.core :as json]
     [isaac.comm.acp.websocket.heartbeat :as sut]
     [isaac.nexus :as nexus]
-    [isaac.scheduler :as scheduler]
+    [isaac.scheduler.runtime :as scheduler]
     [org.httpkit.server :as httpkit]
     [speclj.core :refer :all]))
 
@@ -72,7 +72,7 @@
         (should-not-throw (sut/beat-all!))))
 
     (it "is callable with the 1-arg run-ctx the scheduler passes"
-      ;; isaac.scheduler invokes recurring handlers with one ctx-map
+      ;; isaac.scheduler.runtime invokes recurring handlers with one ctx-map
       ;; argument. Before the 1-arity overload landed, beat-all! was
       ;; 0-arity and every scheduler tick threw "Wrong number of args
       ;; (1) passed to ...", so no frames actually went out — long
@@ -85,7 +85,7 @@
 
   (context "ensure-started!"
 
-    (it "schedules a recurring beat task via isaac.scheduler/every!"
+    (it "schedules a recurring beat task via isaac.scheduler.runtime/every!"
       (let [calls (atom [])]
         (with-redefs [scheduler/every! (fn [sched ms handler]
                                          (swap! calls conj {:scheduler sched :ms ms :handler handler})

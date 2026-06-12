@@ -1,6 +1,6 @@
 (ns isaac.comm.acp
   (:require
-    [isaac.comm :as comm]
+    [isaac.comm.protocol :as comm]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.logger :as log]
     [isaac.util.jsonrpc :as jrpc]))

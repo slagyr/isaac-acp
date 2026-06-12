@@ -5,6 +5,7 @@
     [isaac.comm.acp.cli :as sut]
     [isaac.fs :as fs]
     [isaac.spec-helper :as helper]
+    [isaac.session.spec-helper :as session-helper]
     [isaac.system :as system]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.ws-client :as ws]
@@ -52,7 +53,7 @@
 
   #_{:clj-kondo/ignore [:invalid-arity]}
   (around [it]
-    (helper/with-memory-store
+    (session-helper/with-memory-store
       (system/with-nested-system {:fs (fs/mem-fs)}
         (it))))
 
@@ -60,7 +61,7 @@
     (let [transport                  (ws/reconnectable-loopback)
           state-dir                  (str "/test/acp-proxy-reconnect-" (random-uuid))
           queue                      (LinkedBlockingQueue.)
-          _                          (helper/create-session! state-dir "s1")
+          _                          (session-helper/create-session! state-dir "s1")
           {:keys [future
                   output-writer]}    (run-with-queue queue
                                                      (assoc base-opts
@@ -103,7 +104,7 @@
                                                     :acp-proxy-reconnect-max-delay-ms 2
                                                     :acp-proxy-eof-grace-ms 0
                                                     :ws-connection-factory (fn [url _] (ws/connect-loopback! transport url))))]
-      (helper/create-session! state-dir "s1")
+      (session-helper/create-session! state-dir "s1")
       (ws/accept-loopback! transport)
       (ws/drop-loopback! transport)
       (await-lines output-writer 1)

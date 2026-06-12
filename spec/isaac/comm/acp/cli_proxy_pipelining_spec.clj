@@ -5,6 +5,7 @@
     [isaac.comm.acp.cli :as sut]
     [isaac.fs :as fs]
     [isaac.spec-helper :as helper]
+    [isaac.session.spec-helper :as session-helper]
     [isaac.system :as system]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.ws-client :as ws]
@@ -42,7 +43,7 @@
 
   #_{:clj-kondo/ignore [:invalid-arity]}
   (around [it]
-    (helper/with-memory-store
+    (session-helper/with-memory-store
       (system/with-nested-system {:fs (fs/mem-fs)}
         (it))))
 

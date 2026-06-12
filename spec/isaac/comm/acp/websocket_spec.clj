@@ -9,6 +9,7 @@
     [isaac.fs :as fs]
     [isaac.logger :as log]
     [isaac.spec-helper :as helper]
+    [isaac.session.spec-helper :as session-helper]
     [isaac.system :as system]
     [org.httpkit.server :as httpkit]
     [speclj.core :refer :all]))
@@ -16,7 +17,7 @@
 (describe "ACP WebSocket endpoint"
 
   #_{:clj-kondo/ignore [:invalid-arity]}
-  (around [it] (helper/with-memory-store (it)))
+  (around [it] (session-helper/with-memory-store (it)))
 
   (describe "send-dispatch-result!"
 
@@ -44,27 +45,27 @@
         (let [state-dir (str "/test/acp-ws-resume-" (random-uuid))
               older     "older"
               recent    "recent"
-              _         (helper/create-session! state-dir older)
-              _         (helper/create-session! state-dir recent)
-              _         (helper/update-session! state-dir older {:updated-at "2026-04-10T10:00:00"})
-              _         (helper/update-session! state-dir recent {:updated-at "2026-04-12T15:00:00"})
+              _         (session-helper/create-session! state-dir older)
+              _         (session-helper/create-session! state-dir recent)
+              _         (session-helper/update-session! state-dir older {:updated-at "2026-04-10T10:00:00"})
+              _         (session-helper/update-session! state-dir recent {:updated-at "2026-04-12T15:00:00"})
               result    (sut/dispatch-line {:cfg          {}
                                             :state-dir    state-dir
                                             :query-params {"resume" "true"}}
                                             {:headers {} :uri "/acp"}
                                             (str/trim-newline (jrpc/request-line 2 "session/new" {})))]
           (should= recent (get-in result [:result :sessionId]))
-          (should= 2 (count (helper/list-sessions state-dir "main"))))))
+          (should= 2 (count (session-helper/list-sessions state-dir "main"))))))
 
     (it "reuses the most recent session when state-dir and crew are provided by handler inputs"
       (system/with-nested-system {:fs (fs/mem-fs)}
         (let [state-dir (str "/test/acp-home-" (random-uuid) "/.isaac")
               older     "older"
               recent    "recent"
-              _         (helper/create-session! state-dir older {:crew "marvin"})
-              _         (helper/create-session! state-dir recent {:crew "marvin"})
-              _         (helper/update-session! state-dir older {:updated-at "2026-04-10T10:00:00"})
-              _         (helper/update-session! state-dir recent {:updated-at "2026-04-12T15:00:00"})
+              _         (session-helper/create-session! state-dir older {:crew "marvin"})
+              _         (session-helper/create-session! state-dir recent {:crew "marvin"})
+              _         (session-helper/update-session! state-dir older {:updated-at "2026-04-10T10:00:00"})
+              _         (session-helper/update-session! state-dir recent {:updated-at "2026-04-12T15:00:00"})
               result    (sut/dispatch-line {:cfg          {}
                                             :state-dir    state-dir
                                             :query-params {"resume" "true"
@@ -72,16 +73,16 @@
                                             {:headers {} :uri "/acp"}
                                             (str/trim-newline (jrpc/request-line 2 "session/new" {})))]
           (should= recent (get-in result [:result :sessionId]))
-          (should= 2 (count (helper/list-sessions state-dir "marvin"))))))
+          (should= 2 (count (session-helper/list-sessions state-dir "marvin"))))))
 
     (it "attaches a requested session and replays its transcript on session/new"
       (system/with-nested-system {:fs (fs/mem-fs)}
         (let [state-dir     (str "/test/acp-home-" (random-uuid) "/.isaac")
               session-key   "tidy-comet"
               notifications (atom [])
-              _             (helper/create-session! state-dir session-key {:crew "marvin"})
-              _             (helper/append-message! state-dir session-key {:role "user" :content "Howdy."})
-              _             (helper/append-message! state-dir session-key {:role "assistant" :content "Howdy."})
+              _             (session-helper/create-session! state-dir session-key {:crew "marvin"})
+              _             (session-helper/append-message! state-dir session-key {:role "user" :content "Howdy."})
+              _             (session-helper/append-message! state-dir session-key {:role "assistant" :content "Howdy."})
               result        (sut/dispatch-line {:cfg          {}
                                                 :state-dir    state-dir
                                                 :output-writer #(swap! notifications conj (json/parse-string % true))
