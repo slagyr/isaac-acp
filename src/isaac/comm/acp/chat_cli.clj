@@ -1,5 +1,6 @@
 (ns isaac.comm.acp.chat-cli
   (:require
+    [isaac.cli.api :as cli-api]
     [clojure.string :as str]
     [clojure.tools.cli :as tools-cli]
     [isaac.cli.registry :as registry]
@@ -116,3 +117,11 @@
    :run-fn      run-fn})
 
 ;; endregion ^^^^^ Chat Command ^^^^^
+
+;; ----- :isaac/cli berth implementation -----
+
+(defmethod cli-api/run :chat [_id opts]
+  (run-fn opts))
+
+(defmethod cli-api/option-spec :chat [_id]
+  option-spec)

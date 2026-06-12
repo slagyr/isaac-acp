@@ -1,6 +1,7 @@
 ;; mutation-tested: 2026-05-06
 (ns isaac.comm.acp.cli
   (:require
+    [isaac.cli.api :as cli-api]
     [cheshire.core :as json]
     [clojure.tools.cli :as tools-cli]
     [clojure.string :as str]
@@ -608,3 +609,11 @@
    :desc        "Run Isaac as an ACP agent over stdio"
    :option-spec option-spec
    :run-fn      run-fn})
+
+;; ----- :isaac/cli berth implementation -----
+
+(defmethod cli-api/run :acp [_id opts]
+  (run-fn opts))
+
+(defmethod cli-api/option-spec :acp [_id]
+  option-spec)

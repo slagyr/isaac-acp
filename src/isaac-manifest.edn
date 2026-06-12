@@ -13,11 +13,9 @@
  ;; at registration time, so :option-spec and :run-fn point at vars
  ;; defined in this module.
  :isaac/cli
- {:acp  {:usage       "acp [options]"
-         :desc        "Run Isaac as an ACP agent over stdio"
-         :option-spec isaac.comm.acp.cli/option-spec
-         :run-fn      isaac.comm.acp.cli/run-fn}
-  :chat {:usage       "chat [options]"
-         :desc        "Launch Toad chat UI"
-         :option-spec isaac.comm.acp.chat-cli/option-spec
-         :run-fn      isaac.comm.acp.chat-cli/run-fn}}}
+ {:acp  {:usage     "acp [options]"
+         :summary   "Run Isaac as an ACP agent over stdio"
+         :namespace isaac.comm.acp.cli}
+  :chat {:usage     "chat [options]"
+         :summary   "Launch Toad chat UI"
+         :namespace isaac.comm.acp.chat-cli}}}
