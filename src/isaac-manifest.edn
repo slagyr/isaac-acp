@@ -3,8 +3,18 @@
  :factory     isaac.module/module
  :description "ACP (Agent Communication Protocol) for isaac — stdio agent surface, WebSocket transport, and the chat TUI launcher."
 
- ;; HTTP route contributed via the :isaac.server/route berth. Discord and
- ;; other websocket clients use /acp as the gateway.
+ :isaac.config/schema
+ {:acp {:schema {:name        :acp
+                 :type        :map
+                 :description "Agent Communication Protocol configuration"
+                 :schema      {:proxy-max-reconnects         {:type        :int
+                                                              :description "Maximum reconnect attempts for ACP proxy"}
+                               :proxy-reconnect-delay-ms     {:type        :int
+                                                              :description "Base reconnect delay in milliseconds for ACP proxy"}
+                               :proxy-reconnect-max-delay-ms {:type        :int
+                                                              :description "Maximum reconnect delay in milliseconds for ACP proxy"}}}}}
+
+ ;; HTTP route contributed via the :isaac.server/route berth.
  :isaac.server/route
  [{:method :get :path "/acp" :handler isaac.comm.acp.websocket/handler}]
 
