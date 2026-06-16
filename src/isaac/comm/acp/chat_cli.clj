@@ -6,7 +6,7 @@
     [isaac.cli.registry :as registry]
     [isaac.config.loader :as config]
     [isaac.config.root :as root]
-    [isaac.util.shell :as shell]))
+    [isaac.shell :as shell]))
 
 ;; region ----- Toad -----
 

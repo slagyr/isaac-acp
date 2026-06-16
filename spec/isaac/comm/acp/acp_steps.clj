@@ -47,11 +47,26 @@
 ;; Registered as :isaac-run-preflight so isaac.server.cli.cli-steps/isaac-run
 ;; calls us right before main/run — after the Background's `config:` step has
 ;; set :server-config but before any extra-opts get computed.
+(defn- on-disk-config
+  "Raw (un-normalized) isaac.edn the `config:` step persisted to the mem-fs.
+   Read raw — the loader strips non-schema keys like :acp, so the loaded
+   config wouldn't carry :acp/:proxy-transport."
+  []
+  (let [cfg-root (or (g/get :runtime-root-dir) (g/get :root))
+        fs*      (or (g/get :mem-fs) (nexus/get :fs) (fs/real-fs))
+        path     (when cfg-root (str cfg-root "/config/isaac.edn"))]
+    #_{:clj-kondo/ignore [:invalid-arity]}
+    (when (and path (fs/exists? fs* path))
+      (try (edn/read-string (fs/slurp fs* path)) (catch Throwable _ nil)))))
+
 (defn- acp-isaac-run-preflight! []
   (let [root       (g/get :root)
         root-home  (when (and root (str/ends-with? root "/.isaac"))
                      (fs/parent root))
-        loopback?  (= "loopback" (get-in (g/get :server-config) [:acp :proxy-transport]))]
+        ;; The `config:` step may set :server-config (server step) or persist
+        ;; to the on-disk isaac.edn (agent step); check both for loopback.
+        loopback?  (or (= "loopback" (get-in (g/get :server-config) [:acp :proxy-transport]))
+                       (= "loopback" (get-in (on-disk-config) [:acp :proxy-transport])))]
     (when (and loopback? (nil? (g/get :acp-remote-connection-factory)))
       (ensure-loopback-proxy!))
     (g/update! :main-extra-opts
@@ -506,7 +521,7 @@
         state-dir      (effective-state-dir)
         provider-cfgs  (g/get :provider-configs)
         mem-fs         (g/get :mem-fs)
-        cfg            (or (g/get :server-config) {})
+        cfg            (or (g/get :server-config) (on-disk-config) {})
         server-runner* (start-loopback-server! transport state-dir (g/get :agents) (g/get :models) provider-cfgs mem-fs)
         run*           (future
                          (let [run! #(binding [*in*  (java.io.BufferedReader. (java.io.StringReader. ""))
@@ -516,6 +531,7 @@
                                                                   :provider-configs provider-cfgs
                                                                   :acp-proxy-max-reconnects (get-in cfg [:acp :proxy-max-reconnects])
                                                                   :acp-proxy-reconnect-delay-ms (get-in cfg [:acp :proxy-reconnect-delay-ms])
+                                                                  :acp-proxy-reconnect-max-delay-ms (get-in cfg [:acp :proxy-reconnect-max-delay-ms])
                                                                   :acp-read-line-fn next-proxy-line
                                                                   :ws-connection-factory (fn [url _]
                                                                                            (g/assoc! :acp-loopback-request {:query-string (when (str/includes? url "?")
