@@ -19,6 +19,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Sibling checkouts: the :spec/:features aliases reference ../isaac-agent/spec
+      # (step defs, marigold.agent) and ../isaac-agent/modules/isaac.comm.telly as
+      # raw paths, so the sibling repos must be present alongside isaac-acp.
+      - name: Check out isaac-foundation
+        run: git clone --depth 1 https://github.com/slagyr/isaac-foundation.git ../isaac-foundation
+
+      - name: Check out isaac-agent
+        run: git clone --depth 1 https://github.com/slagyr/isaac-agent.git ../isaac-agent
+
+      - name: Check out isaac-server
+        run: git clone --depth 1 https://github.com/slagyr/isaac-server.git ../isaac-server
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
