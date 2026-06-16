@@ -6,7 +6,7 @@
     [isaac.config.loader :as config]
     [isaac.fs :as fs]
     [isaac.logger :as log]
-    [isaac.root :as root]
+    [isaac.config.root :as root]
     [isaac.session.store.spi :as store]
     [isaac.system :as system]
     [isaac.util.jsonrpc :as dispatch]

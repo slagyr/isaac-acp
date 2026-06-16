@@ -11,7 +11,7 @@
     [isaac.drive.turn :as single-turn]
     [isaac.llm.api.protocol :as llm-api]
     [isaac.logger :as log]
-    [isaac.root :as root]
+    [isaac.config.root :as root]
     [isaac.server.routes]
     [isaac.session.store.spi :as store]
     [isaac.session.transcript :as message-content]
@@ -63,10 +63,11 @@
                                 (store/get-session session-store session-name))]
       (duplicate-session-response message (:id existing-session))
       (let [session (with-startup-cwd #((requiring-resolve 'isaac.session.context/create-with-resolved-behavior!)
-                                        (:name params) {:crew     crew-id
-                                                       :channel  "acp"
-                                                       :chatType "direct"
-                                                       :origin   {:kind :acp}}))]
+                                        (:name params) {:crew          crew-id
+                                                       :channel       "acp"
+                                                       :chatType      "direct"
+                                                       :origin        {:kind :acp}
+                                                       :session-store session-store}))]
         {:notifications [(acp-comm/available-commands-update (:id session) (available-commands))]
          :result        {:sessionId (:id session)}}))))
 

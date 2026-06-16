@@ -5,7 +5,7 @@
     [clojure.tools.cli :as tools-cli]
     [isaac.cli.registry :as registry]
     [isaac.config.loader :as config]
-    [isaac.root :as root]
+    [isaac.config.root :as root]
     [isaac.util.shell :as shell]))
 
 ;; region ----- Toad -----

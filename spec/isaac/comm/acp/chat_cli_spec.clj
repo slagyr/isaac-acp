@@ -26,7 +26,7 @@
     [isaac.tool.registry :as tool-registry]
     [isaac.util.shell :as shell]
     [isaac.fs :as fs]
-    [isaac.root :as home]
+    [isaac.config.root :as home]
     [isaac.main :as main]
     [isaac.system :as system]
     [speclj.core :refer :all]))

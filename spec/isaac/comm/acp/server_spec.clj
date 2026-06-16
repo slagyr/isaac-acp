@@ -8,6 +8,7 @@
     [isaac.drive.turn :as single-turn]
     [isaac.logger :as log]
     [isaac.marigold :as marigold]
+    [isaac.marigold.agent :as marigold-agent]
     [isaac.module.loader :as module-loader]
     [isaac.tool.builtin :as builtin]
     [isaac.tool.exec :as exec]
@@ -36,7 +37,7 @@
 
 (describe "ACP server"
 
-  (marigold/with-manifest)
+  (marigold-agent/with-manifest)
 
   #_{:clj-kondo/ignore [:unresolved-symbol]}
   (around [example] (session-helper/with-memory-store (system/with-nested-system {:state-dir test-dir :fs (fs/mem-fs)} (example))))
@@ -393,7 +394,7 @@
     (it "sends connection refused text as an agent message chunk and returns end_turn"
       ;; Marigold's themed apis all route to the grover stub (no real HTTP);
       ;; step out to exercise an api implementation that opens a TCP connection.
-      (marigold/with-real-manifest
+      (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (let [writer   (StringWriter.)
               response (sut/dispatch-line {:state-dir        test-dir
@@ -464,7 +465,7 @@
 
     (it "writes a session/update text notification for slash commands"
       ;; Production /status formatting is the system under test.
-      (marigold/with-real-manifest
+      (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (let [writer        (StringWriter.)
               result        (sut/dispatch-line (assoc prompt-opts :output-writer writer)
@@ -488,7 +489,7 @@
 
     (it "switches crew members for ACP slash commands"
       ;; Production /crew handler is the system under test.
-      (marigold/with-real-manifest
+      (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (let [agents        {"main"  {:name "main" :soul "You are Isaac." :model "grover"}
                              "ketch" {:name "ketch" :soul "You are a pirate." :model "grover"}}
@@ -509,7 +510,7 @@
 
     (it "switches models for ACP slash commands"
       ;; Production /model handler is the system under test.
-      (marigold/with-real-manifest
+      (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (let [alt-model       "starcore-7-fast"
               models-with-alt (assoc test-models marigold/starcore {:alias marigold/starcore :model alt-model :provider marigold/starcore :context-window 32768})
@@ -577,7 +578,7 @@
 
     (it "returns cancelled when session/cancel interrupts an in-flight exec tool"
       ;; Exercises the production exec tool's cancellation behavior.
-      (marigold/with-real-manifest
+      (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (builtin/register-all!)
         (grover/enqueue! [{:tool_call "exec" :arguments {:command "sleep 30"}}])
@@ -604,7 +605,7 @@
           (should= "cancelled" (get-in (deref prompt 1000 nil) [:result :stopReason])))))
 
     (it "emits a cancelled tool_call_update when session/cancel interrupts an in-flight exec tool"
-      (marigold/with-real-manifest
+      (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (builtin/register-all!)
         (grover/enqueue! [{:tool_call "exec" :arguments {:command "sleep 30"}}])

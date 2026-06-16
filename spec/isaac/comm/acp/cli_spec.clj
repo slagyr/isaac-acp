@@ -7,7 +7,7 @@
     [isaac.comm.acp.chat-cli :as chat-cli]
     [isaac.comm.acp.acp-steps :as acp-steps]
     [isaac.comm.acp.cli :as sut]
-    [isaac.root :as home]
+    [isaac.config.root :as home]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.jsonrpc :as dispatch]
     [isaac.util.ws-client :as ws]

@@ -1,51 +1,21 @@
-{:paths ["src" "spec"]
+{:tasks
+ ;; Tests run via JVM clojure aliases (deps.edn :spec / :features), matching
+ ;; the sibling consumers (cron/hail). When a ../isaac-agent checkout exists,
+ ;; the :dev-local alias overrides the pinned agent/server/foundation deps with
+ ;; local siblings so cross-repo edits land without pushing. Set ISAAC_GIT=1 to
+ ;; force the pinned git shas even when siblings exist.
+ {:init (def ^:private alias-prefix
+          (if (and (not (System/getenv "ISAAC_GIT"))
+                   (babashka.fs/exists? "../isaac-agent"))
+            "-M:dev-local"
+            "-M"))
 
- ;; apron + clout pinned to match isaac's bb.edn — transitive resolution
- ;; otherwise picks apron 2.5.0 (via gherclj) and clout 2.2.1 (via
- ;; c3kit-wire), whose instaparse dependency does not load under bb.
- :deps  {clout/clout                 {:mvn/version "1.1.0"}
-         com.cleancoders.c3kit/apron {:mvn/version "3.0.0"}
-         io.github.slagyr/gherclj    {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
-         speclj/speclj               {:mvn/version "3.13.0"}}
+  spec     {:doc  "Run ACP unit specs"
+            :task (apply shell "clojure" (str alias-prefix ":spec") *command-line-args*)}
 
- ;; bb tasks auto-detect isaac: a sibling ../isaac checkout (so cross-repo
- ;; edits land without pushing) when present, otherwise the pinned git sha
- ;; (so fresh clones / CI just work). Set ISAAC_GIT=1 to force git even
- ;; when the local checkout exists.
- ;;
- ;; isaac-spec uses :local/root "../isaac/spec" rather than :local/root
- ;; "../isaac" + :deps/root "spec" — tools.deps applies the inner deps.edn's
- ;; :deps but not its :paths when the same local-root is reused with
- ;; :deps/root, leaving ../isaac/spec off the classpath.
- :tasks
- {:init (let [use-local? (and (not (System/getenv "ISAAC_GIT"))
-                              (babashka.fs/exists? "../isaac"))]
-          (babashka.deps/add-deps
-            {:deps (if use-local?
-                     '{io.github.slagyr/isaac      {:local/root "../isaac"}
-                       io.github.slagyr/isaac-spec {:local/root "../isaac/spec"}}
-                     '{io.github.slagyr/isaac      {:git/url "https://github.com/slagyr/isaac.git"
-                                                    :git/sha "d34f9d952ebedd3d09b062a72c2b091347372bf4"}
-                       io.github.slagyr/isaac-spec {:git/url   "https://github.com/slagyr/isaac.git"
-                                                    :git/sha   "4a41412e39d13c7caa7b9ea23e02775b38f95ba8"
-                                                    :deps/root "spec"}})}))
-
-  spec     {:doc      "Run ACP specs"
-            :requires ([speclj.main :as speclj])
-            :task     (apply speclj/-main "-c" "-D" "spec" *command-line-args*)}
-
-  features {:doc      "Run ACP features (excludes @slow and @wip)"
-            :requires ([gherclj.main :as main])
-            :task     (let [feature-args (if (seq *command-line-args*)
-                                           *command-line-args*
-                                           (->> (file-seq (java.io.File. "features"))
-                                                (filter (fn [f] (.isFile f)))
-                                                (map (fn [f] (.getPath f)))
-                                                (filter (fn [p] (clojure.string/ends-with? p ".feature")))
-                                                sort))]
-                        (apply main/-main (concat ["-s" "isaac.**-steps"]
-                                                  ["-t" "~slow" "-t" "~wip"]
-                                                  feature-args)))}
+  features {:doc  "Run ACP features (excludes @slow and @wip)"
+            :task (do (babashka.fs/delete-tree "target")
+                      (apply shell "clojure" (str alias-prefix ":features") *command-line-args*))}
 
   ci       {:doc  "Run all specs and features"
             :task (do (shell "bb" "spec")
