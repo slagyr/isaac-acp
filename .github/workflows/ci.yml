@@ -42,12 +42,7 @@ jobs:
             ${{ runner.os }}-clojure-
 
       - name: Run specs
-        run: clojure -M:test -m speclj.main -c -D spec
+        run: clojure -M:spec
 
       - name: Run features
-        run: |
-          clojure -M:test -m gherclj.main \
-            -s "isaac.**-steps" \
-            -t "~slow" \
-            -t "~wip" \
-            $(find features -type f -name '*.feature' | sort)
+        run: clojure -M:features
