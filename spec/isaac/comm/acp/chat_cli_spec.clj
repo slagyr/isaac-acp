@@ -24,7 +24,7 @@
     isaac.server.routes
     isaac.slash.registry
     [isaac.tool.registry :as tool-registry]
-    [isaac.util.shell :as shell]
+    [isaac.shell :as shell]
     [isaac.fs :as fs]
     [isaac.config.root :as home]
     [isaac.main :as main]
