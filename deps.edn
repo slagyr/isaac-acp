@@ -7,9 +7,9 @@
  :deps  {io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
                                             :git/tag "v0.1.0" :git/sha "57f6100890ec1fb3bbf9b048aa8f2ffd8000ae32"}
          io.github.slagyr/isaac-agent      {:git/url "https://github.com/slagyr/isaac-agent.git"
-                                            :git/tag "v0.1.0" :git/sha "bb13cb611f4d1c4d6d3b5966e41e43ce59fd9ca9"}
+                                            :git/tag "v0.1.0" :git/sha "ff2b37008d3cc69a03f233784b39264a09d5205c"}
          io.github.slagyr/isaac-server     {:git/url "https://github.com/slagyr/isaac-server.git"
-                                            :git/tag "v0.1.0" :git/sha "40d4258e96b3bf0d0a6a1bbd66f8bf418754e417"}
+                                            :git/tag "v0.1.0" :git/sha "6b368f8b77f343774a2665713aa1135de2f24250"}
          ;; acp's websocket comm directly uses org.httpkit.server + ring.util.codec
          ;; (transitive via the monolith before the split — now declared here).
          clout/clout                 {:mvn/version "1.1.0"}
@@ -38,10 +38,10 @@
                                                                        :git/tag "v0.1.0" :git/sha "57f6100890ec1fb3bbf9b048aa8f2ffd8000ae32"
                                                                        :deps/root "spec-support"}
                        io.github.slagyr/isaac-agent-spec              {:git/url   "https://github.com/slagyr/isaac-agent.git"
-                                                                       :git/tag "v0.1.0" :git/sha "bb13cb611f4d1c4d6d3b5966e41e43ce59fd9ca9"
+                                                                       :git/tag "v0.1.0" :git/sha "ff2b37008d3cc69a03f233784b39264a09d5205c"
                                                                        :deps/root "spec"}
                        io.github.slagyr/isaac-server-test-support     {:git/url   "https://github.com/slagyr/isaac-server.git"
-                                                                       :git/tag "v0.1.0" :git/sha "40d4258e96b3bf0d0a6a1bbd66f8bf418754e417"
+                                                                       :git/tag "v0.1.0" :git/sha "6b368f8b77f343774a2665713aa1135de2f24250"
                                                                        :deps/root "spec-support"}
                        speclj/speclj            {:mvn/version "3.13.0"}
                        babashka/process         {:mvn/version "0.5.22"}
@@ -50,13 +50,13 @@
 
   :features {:extra-paths ["spec"]
              :extra-deps  {io.github.slagyr/isaac-server-test-support     {:git/url   "https://github.com/slagyr/isaac-server.git"
-                                                                           :git/tag "v0.1.0" :git/sha "40d4258e96b3bf0d0a6a1bbd66f8bf418754e417"
+                                                                           :git/tag "v0.1.0" :git/sha "6b368f8b77f343774a2665713aa1135de2f24250"
                                                                            :deps/root "spec-support"}
                            io.github.slagyr/isaac-foundation-spec         {:git/url   "https://github.com/slagyr/isaac-foundation.git"
                                                                            :git/tag "v0.1.0" :git/sha "57f6100890ec1fb3bbf9b048aa8f2ffd8000ae32"
                                                                            :deps/root "spec"}
                            io.github.slagyr/isaac-agent-spec              {:git/url   "https://github.com/slagyr/isaac-agent.git"
-                                                                           :git/tag "v0.1.0" :git/sha "bb13cb611f4d1c4d6d3b5966e41e43ce59fd9ca9"
+                                                                           :git/tag "v0.1.0" :git/sha "ff2b37008d3cc69a03f233784b39264a09d5205c"
                                                                            :deps/root "spec"}
                            speclj/speclj                {:mvn/version "3.13.0"}
                            babashka/process             {:mvn/version "0.5.22"}
