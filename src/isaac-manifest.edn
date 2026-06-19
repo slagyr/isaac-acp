@@ -1,6 +1,6 @@
 {:id          :isaac.comm.acp
  :version     "0.1.3"
- :factory     isaac.module/module
+ :factory     isaac.module.protocol/module
  :description "ACP (Agent Communication Protocol) for isaac — stdio agent surface, WebSocket transport, and the chat TUI launcher."
 
  :isaac.config/schema
