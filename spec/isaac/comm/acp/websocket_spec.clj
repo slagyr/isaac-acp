@@ -118,7 +118,7 @@
                                          :headers    {}})]
               (should= :channel (:body response))
               (should-not-be-nil @captured)
-              (should (fn? (:on-receive (second @captured))))))))
+              (should (fn? (:on-receive (second @captured)))))))))
 
     (it "logs connection lifecycle events"
       (let [captured (atom nil)]
@@ -134,7 +134,10 @@
             ((:on-open @captured) :channel)
             ((:on-close @captured) :channel 1000 "bye")
             (should= [:acp-ws/connection-opened :acp-ws/connection-closed]
-                     (mapv :event @log/captured-logs))))))
+                     (->> @log/captured-logs
+                          (mapv :event)
+                          (remove #{:config/set-snapshot})
+                          vec))))))
 
     (it "logs initialize dispatch"
       (let [captured (atom nil)]
@@ -154,7 +157,7 @@
             (should= [:acp-ws/initialize]
                      (->> @log/captured-logs
                           (mapv :event)
-                          (remove #{:acp-ws/frame-received})
+                          (remove #{:acp-ws/frame-received :config/set-snapshot})
                           vec))))))
 
     (it "logs session/new with returned session id"
@@ -174,7 +177,7 @@
             ((:on-receive @captured) :channel (str/trim-newline (jrpc/request-line 2 "session/new" {})))
             (should= [{:event :acp-ws/session-new :sessionId "agent:main:acp:direct:user1"}]
                      (->> @log/captured-logs
-                          (remove #(= :acp-ws/frame-received (:event %)))
+                          (remove #(#{:acp-ws/frame-received :config/set-snapshot} (:event %)))
                           (mapv #(select-keys % [:event :sessionId]))))))))
 
     (it "applies query params as websocket handler overrides"
@@ -285,4 +288,4 @@
 
     )
 
-  ))
+  )

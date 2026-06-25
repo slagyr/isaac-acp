@@ -221,9 +221,9 @@
   (let [session-id    (get params :sessionId)
         text          (prompt->text (get params :prompt))
         session-entry (when session-id (store/get-session (session-store) session-id))
-        crew-members  (resolve-crew-members crew-members cfg)
-        effective-cfg (effective-cfg cfg crew-members (or models {}) (or provider-configs {}))
-        _             (config/set-snapshot! effective-cfg "ACP session/prompt effective config")]
+        cfg*          (or (config/snapshot "ACP session/prompt config base") cfg {})
+        crew-members  (resolve-crew-members crew-members cfg*)
+        effective-cfg (effective-cfg cfg* crew-members (or models {}) (or provider-configs {}))]
     (when (nil? session-id)
       (throw (invalid-params "sessionId is required")))
     (when (nil? text)

@@ -152,7 +152,8 @@
 
 (defn receive-line! [opts request send-line! line]
   (log-frame-received! request line)
-  (let [task #(let [result (dispatch-line (assoc opts :output-writer send-line!) request line)]
+  (let [opts* (assoc opts :cfg (config/snapshot "ACP websocket request"))
+        task  #(let [result (dispatch-line (assoc opts* :output-writer send-line!) request line)]
                 (send-dispatch-result! send-line! result))]
     (if (async-prompt? line)
       (.submit dispatch-executor ^Runnable task)

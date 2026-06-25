@@ -119,6 +119,27 @@
                     :crew           "main"}
                    @captured-request))))
 
+    (it "reads the current config snapshot for session/prompt instead of stale connection cfg"
+      (session-helper/create-session! test-dir "agent:main:acp:direct:user1" {:crew "main"})
+      (let [stale-cfg       {:defaults {:crew "main" :model "grover"}
+                             :crew     {"main" {:soul "You are Isaac." :model "grover"}}
+                             :models   {"grover" {:model "echo" :provider "grover"}}}
+            reloaded-cfg    {:defaults {:crew "main" :model "gpt"}
+                             :crew     {"main" {:soul "You are Isaac." :model "gpt"}}
+                             :models   {"grover" {:model "echo" :provider "grover"}
+                                        "gpt"    {:model "gpt-5.4" :provider "chatgpt"}}}
+            captured-config (atom nil)]
+        (config/set-snapshot! reloaded-cfg "ACP server-spec hot-reload snapshot")
+        (with-redefs [sut/run-prompt (fn [_ _ _ request]
+                                       (reset! captured-config (:config request))
+                                       {:stopReason "end_turn"})]
+          (#'sut/session-prompt-handler (StringWriter.) nil nil nil stale-cfg test-dir nil
+                                        {:sessionId "agent:main:acp:direct:user1"
+                                         :prompt    [{:type "text" :text "Hello"}]}
+                                        nil)
+          (should= "gpt" (get-in @captured-config [:crew "main" :model]))
+          (should (contains? (:models @captured-config) "gpt")))))
+
     )
 
   (describe "session/new"
