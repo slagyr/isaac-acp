@@ -466,7 +466,7 @@
             text          (-> text-updates first (get-in [:params :update :content :text]))]
         (should= "end_turn" (get-in response [:result :stopReason]))
         (should= 1 (count text-updates))
-        (should= "no model configured for crew: main" text)
+        (should= "unknown provider \"chatgpt\" — configured: (none) — known templates: flicker-labs, grover-stub, helm-systems, quantum-anvil, starcore" text)
         (should= "" (str error-writer))))
 
     (it "catches unexpected exceptions and returns end_turn with error text"

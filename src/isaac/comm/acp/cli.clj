@@ -56,13 +56,22 @@
 (defn- build-server-opts [opts]
   (let [home         (home-dir opts)
         requested-sdir (state-dir opts)
-        cfg          (config/normalize-config (:config (config/load-config-result {:root requested-sdir})))
+        raw-config   (:config (config/load-config-result {:root requested-sdir}))
+        cfg          (config/normalize-config raw-config)
         sdir         (or (:state-dir cfg) (:stateDir cfg) requested-sdir)
         out          (or (:output-writer opts) *out*)
         crew-members (or (when (map? (:crew opts)) (:crew opts)) (:agents opts))
         models    (:models opts)
         prov-cfgs (:provider-configs opts)
         crew-id   (when (string? (:crew opts)) (:crew opts))]
+    ;; Refresh the process-wide config snapshot from the config we just loaded
+    ;; for this run. The per-turn handlers (e.g. session-prompt-handler) read
+    ;; config/snapshot as their config base — mirroring the websocket path's
+    ;; per-turn refresh — so without committing here a stdio run would reuse a
+    ;; stale snapshot left by a previous run in the same JVM (notably across
+    ;; test scenarios), resolving the wrong crew model.
+    (when (nil? crew-members)
+      (config/set-snapshot! raw-config "ACP stdio run config refresh"))
     (cond-> {:state-dir sdir :home home :output-writer out}
       crew-members (assoc :crew-members crew-members)
       models    (assoc :models models)
