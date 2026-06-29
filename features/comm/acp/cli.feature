@@ -179,7 +179,7 @@ Feature: ACP command
       {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
       {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"bosun-chat","prompt":[{"type":"text","text":"hi"}]}}
       """
-    When isaac is run with "acp --crew bosun --session bosun-chat"
+    When isaac is run with "acp --session bosun-chat --with-crew bosun"
     Then the stdout contains "\"stopReason\":\"end_turn\""
     And the exit code is 0
 

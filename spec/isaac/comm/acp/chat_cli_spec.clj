@@ -466,10 +466,12 @@
             store-stub    (reify store/SessionStore
                             (get-session [_ key-str]
                               (when (= key-str "agent:main:cli:direct:target")
-                                {:key "agent:main:cli:direct:target" :context-window 2})))]
-        (with-redefs [compaction/should-compact?  (fn [entry _]
+                                {:key "agent:main:cli:direct:target" :context-window 2}))
+                            (get-transcript [_ _] nil))]
+        (with-redefs [compaction/should-compact?  (fn [_total entry _context-window]
                                              (reset! checked-entry entry)
-                                             false)]
+                                             false)
+                      compaction/estimate-prompt-tokens (constantly 0)]
           (single-turn/check-compaction! {:session-store store-stub}
                                  "agent:main:cli:direct:target"
                                  {:model "m" :soul "s" :context-window 32768
@@ -480,7 +482,8 @@
       (let [key-str "agent:main:cli:direct:checklog"
             _       (session-helper/create-session! test-dir key-str)
             _       (session-helper/update-tokens! test-dir key-str {:input-tokens 50 :output-tokens 0})]
-        (with-redefs [compaction/should-compact? (constantly false)]
+        (with-redefs [compaction/should-compact? (constantly false)
+                      compaction/estimate-prompt-tokens (constantly 50)]
           (single-turn/check-compaction! key-str
                                  {:model "echo" :soul "s" :context-window 100
                                   :provider (llm-provider/make-provider "grover" {})}))
@@ -498,7 +501,8 @@
             _       (session-helper/create-session! test-dir key-str)
             _       (session-helper/update-tokens! test-dir key-str {:input-tokens 50 :output-tokens 0})]
         (with-redefs [compaction/should-compact? (constantly true)
-                      compaction/compact!        (fn [& _] nil)]
+                      compaction/compact!        (fn [& _] nil)
+                      compaction/estimate-prompt-tokens (constantly 50)]
           (with-out-str
             (single-turn/check-compaction! key-str
                                    {:model "echo" :soul "s" :context-window 100
@@ -540,9 +544,10 @@
       (let [key-str "agent:main:cli:direct:skipdisabled"
             _       (session-helper/create-session! test-dir key-str)]
         (session-helper/update-session! test-dir key-str {:compaction-disabled true})
-        (single-turn/check-compaction! key-str
-                                       {:model "m" :soul "s" :context-window 100
-                                        :provider (llm-provider/make-provider "grover" {})})
+        (with-redefs [compaction/estimate-prompt-tokens (constantly 0)]
+          (single-turn/check-compaction! key-str
+                                         {:model "m" :soul "s" :context-window 100
+                                          :provider (llm-provider/make-provider "grover" {})}))
         (let [entry (first (filter #(= :session/compaction-skipped (:event %)) @log/captured-logs))]
           (should-not-be-nil entry)
           (should= :info (:level entry))
@@ -617,13 +622,16 @@
       (let [key-str   "agent:main:cli:direct:repeatloop"
             _         (session-helper/create-session! test-dir key-str)
             _         (session-helper/update-session! test-dir key-str {:last-input-tokens 62})
-            attempts  (atom 0)]
-        (with-redefs [compaction/compact! (fn [compact-key _]
+            attempts  (atom 0)
+            tokens    (atom 100)]
+        ;; should-compact? now takes (total-tokens entry context-window) and the loop
+        ;; re-checks after each compaction, recursing only when tokens make progress
+        ;; (updated-total < prior). A strictly-decreasing estimate plus a
+        ;; should-compact? counter drives exactly two compaction passes, then stops.
+        (with-redefs [compaction/estimate-prompt-tokens (fn [& _] (swap! tokens #(- % 10)))
+                      compaction/should-compact? (fn [& _] (< @attempts 2))
+                      compaction/compact! (fn [compact-key _]
                                      (swap! attempts inc)
-                                     (session-helper/update-session! test-dir compact-key
-                                                               {:last-input-tokens (case @attempts
-                                                                                     1 40
-                                                                                     2 20)})
                                      {:type "compaction"})]
           (with-out-str
             (single-turn/check-compaction! key-str
@@ -647,7 +655,8 @@
                             (on-compaction-disabled [_ _ _] nil)
                             (on-turn-end [_ _ _] nil))]
         (with-redefs [compaction/should-compact? (constantly true)
-                      compaction/compact!        (fn [& _] nil)]
+                      compaction/compact!        (fn [& _] nil)
+                      compaction/estimate-prompt-tokens (constantly 0)]
           (single-turn/check-compaction! key-str
                                  {:model "m" :soul "s" :context-window 100
                                   :provider (llm-provider/make-provider "grover" {})
@@ -1021,8 +1030,11 @@
     (it "preserves the triggering user message after compaction and completes chat"
       (let [key-str "agent:main:cli:direct:compact-user"
             _       (session-helper/create-session! test-dir key-str)
-            _       (session-helper/append-message! test-dir key-str {:role "user" :content "Please summarize our work"})]
-        (with-redefs [compaction/should-compact?        (constantly true)
+            _       (session-helper/append-message! test-dir key-str {:role "user" :content "Please summarize our work"})
+            compact-calls (atom 0)]
+        ;; compaction now re-checks after each pass (looping while should-compact?);
+        ;; fire it exactly once so the transcript has a single compaction entry.
+        (with-redefs [compaction/should-compact?        (fn [& _] (= 1 (swap! compact-calls inc)))
                       compaction/compact!               (fn [compact-key _]
                                                    (session-helper/append-compaction! test-dir compact-key
                                                                              {:summary "Summary of prior chat"

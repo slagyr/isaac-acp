@@ -17,18 +17,23 @@
     [isaac.logger :as log]
     [isaac.scheduler.runtime :as scheduler]
     [isaac.nexus :as nexus]
+    [isaac.session.frequencies :as frequencies]
+    [isaac.session.frequencies-cli :as frequencies-cli]
     [isaac.session.store.spi :as store]
     [isaac.tool.builtin :as builtin]))
 
 (def option-spec
-  [["-v" "--verbose"      "Log inbound method names to stderr"]
-   ["-s" "--session KEY"  "Attach to an existing session key"]
-   ["-m" "--model ALIAS"  "Override the agent's default model"]
-   ["-c" "--crew NAME"    "Use a named crew member (default: main)"]
-   ["-R" "--resume"       "Resume the most recent session for the crew member"]
-   ["-r" "--remote URL"   "Proxy ACP over a remote WebSocket endpoint"]
-   ["-t" "--token TOKEN"  "Bearer token for remote ACP authentication"]
-   ["-h" "--help"         "Show help"]])
+  ;; Session selection (--session/--crew/--session-tag/--resume/--create/--prefer)
+  ;; and per-turn overrides (--with-*/-M) come from the shared frequencies-cli
+  ;; adapter, the same set the prompt command uses. ACP attaches to ONE resolved
+  ;; session (no --reach).
+  (concat
+    [["-v" "--verbose"     "Log inbound method names to stderr"]
+     ["-r" "--remote URL"  "Proxy ACP over a remote WebSocket endpoint"]
+     ["-t" "--token TOKEN" "Bearer token for remote ACP authentication"]
+     ["-h" "--help"        "Show help"]]
+    frequencies-cli/frequencies-option-spec
+    frequencies-cli/override-option-spec))
 
 (defn- parse-option-map [raw-args]
   (let [{:keys [options errors]} (tools-cli/parse-opts raw-args option-spec)]
@@ -99,17 +104,11 @@
       (store/registered-store)
       (store/create (nexus/get :state-dir))))
 
-(defn- session-exists? [session-key]
-  (some? (store/get-transcript (session-store) session-key)))
-
 (defn- find-most-recent-session [crew-id]
   (when (nexus/get :state-dir)
     (->> (store/list-sessions-by-agent (session-store) crew-id)
          (sort-by :updated-at)
          last)))
-
-(defn- resumed-session-key [crew-id]
-  (some-> (find-most-recent-session crew-id) :id))
 
 (defn- attach-session-handler [handlers session-key]
   (assoc handlers "session/new" (fn [_ _] {:sessionId session-key})))
@@ -541,28 +540,36 @@
                         (str "could not connect to remote ACP endpoint: " url)))
         1))))
 
-(defn- resolve-attach-key [session-key resumed-key]
-  (let [attached-key (some-> (or session-key resumed-key)
-                             (#(store/get-session (session-store) %))
-                             :id)]
-    (or attached-key session-key resumed-key)))
-
-(defn- run-local [opts crew-id model-alias session-key resume?]
+(defn- run-local [opts]
   (let [server-opts (build-server-opts opts)]
     (nexus/register! [:state-dir] (:state-dir server-opts))
     (store/register! (or (config/snapshot "ACP CLI local session-store bootstrap") {}) (:state-dir server-opts))
-    (let [resumed-key (when resume? (resumed-session-key crew-id))
-          attach-key  (resolve-attach-key session-key resumed-key)]
+    (let [override    (frequencies-cli/build-override opts)
+          model-alias (:with-model override)
+          ;; Resolve the single session ACP attaches to from the shared
+          ;; selection core (--session/--crew/--session-tag/--resume/--prefer/--create).
+          target      (frequencies/resolve-session-targets
+                        (frequencies-cli/build-frequencies opts)
+                        (session-store))]
       (cond
         (and model-alias (not (valid-model? server-opts model-alias)))
         (do (print-error! (str "unknown model: " model-alias)) 1)
 
-        (and session-key (not (session-exists? session-key)))
-        (do (print-error! (str "session not found: " session-key)) 1)
+        ;; An explicit --session must already exist; the resolver marks it
+        ;; create? when missing rather than erroring.
+        (and (:session opts) (:create? target))
+        (do (print-error! (str "session not found: " (:session opts))) 1)
+
+        (:error target)
+        (do (print-error! (:message target)) 1)
 
         :else
-        (let [server-opts' (cond-> server-opts
-                             model-alias (assoc :model-override model-alias))
+        ;; Attach session/new to the resolved key when one exists; when the
+        ;; policy resolves to create, let the server open a fresh session.
+        (let [attach-key   (when-not (:create? target) (:session-key target))
+              server-opts' (cond-> server-opts
+                             model-alias          (assoc :model-override model-alias)
+                             (:with-crew override) (assoc :crew-id (:with-crew override)))
               handlers     (cond-> (server/handlers server-opts')
                              attach-key (attach-session-handler attach-key))]
           (builtin/register-all!)
@@ -573,23 +580,20 @@
           0)))))
 
 (defn run [opts]
-  (let [crew-id     (or (when (string? (:crew opts)) (:crew opts)) "main")
-        remote-url  (:remote opts)
-        model-alias (:model opts)
-        session-key (:session opts)
-        resume?     (:resume opts)]
-    (cond
-      (and resume? model-alias)
-      (do (print-error! "cannot combine --resume with --model") 1)
+  (if (:remote opts)
+    ;; Proxy mode forwards the selection/override flags to the remote server,
+    ;; which runs the real command and validates them — no local resolution.
+    (run-remote opts)
+    (let [errors (frequencies-cli/validate-frequencies-options opts)]
+      (cond
+        (seq errors)
+        (do (doseq [error errors] (print-error! error)) 1)
 
-      remote-url
-      (run-remote opts)
+        (= false (ensure-local-config! opts))
+        1
 
-      (= false (ensure-local-config! opts))
-      1
-
-      :else
-      (run-local opts crew-id model-alias session-key resume?))))
+        :else
+        (run-local opts)))))
 
 (defn run-fn [{:keys [_raw-args] :as opts}]
   (let [{:keys [options errors]} (parse-option-map (or _raw-args []))]

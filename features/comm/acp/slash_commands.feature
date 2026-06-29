@@ -53,7 +53,7 @@ Feature: ACP Slash Commands
     Then session "cmd-test" has no transcript entries with role "user"
 
   Scenario: a config-defined prompt-template command is advertised with an argument hint
-    Given the isaac file "config/commands/work.md" exists with:
+    Given the isaac file "prompts/commands/work.md" exists with:
       """
       ---
       type: command
