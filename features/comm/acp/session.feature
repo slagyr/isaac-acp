@@ -99,7 +99,6 @@ Feature: ACP Session Lifecycle
       | session/update | tool_call                   | tc-1                     | completed            |                            |
       | session/update | agent_message_chunk         |                          |                      | found 3 errors             |
 
-  @wip
   Scenario: session/load replays a string tool result as ACP content and rawOutput
     Given the following sessions exist:
       | name        |
@@ -115,7 +114,7 @@ Feature: ACP Session Lifecycle
       | method           | session/load |
       | params.sessionId | resume-test  |
     Then the ACP agent sends notifications:
-      | method         | params.update.sessionUpdate | params.update.toolCallId | params.update.status | params.update.rawOutput | params.update.content[0].content.text |
-      | session/update | user_message_chunk          |                          |                      |                         | inspect the lantern                    |
-      | session/update | tool_call                   | tc-1                     | completed            | wick trimmed            | wick trimmed                           |
-      | session/update | agent_message_chunk         |                          |                      |                         | Lantern looks ready                    |
+      | method         | params.update.sessionUpdate | params.update.toolCallId | params.update.status | params.update.rawOutput | params.update.content.text |
+      | session/update | user_message_chunk          |                          |                      |                         | inspect the lantern        |
+      | session/update | tool_call                   | tc-1                     | completed            | wick trimmed            |                            |
+      | session/update | agent_message_chunk         |                          |                      |                         | Lantern looks ready        |

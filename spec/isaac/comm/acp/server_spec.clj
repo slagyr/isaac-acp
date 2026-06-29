@@ -237,6 +237,23 @@
         (should= "3 matches" (get-in (second notifications) [:params :update :rawOutput]))
         (should= "found 3 errors" (get-in (nth notifications 2) [:params :update :content :text]))))
 
+    (it "replays string tool results with expandable ACP content blocks"
+      (session-helper/create-session! test-dir "resume-lantern")
+      (session-helper/append-message! test-dir "resume-lantern" {:role "user" :content "inspect the lantern"})
+      (session-helper/append-message! test-dir "resume-lantern" {:role "assistant"
+                                                            :content [{:type      "toolCall"
+                                                                       :id        "tc-1"
+                                                                       :name      "read"
+                                                                       :arguments {:file_path "lantern"}}]})
+      (session-helper/append-message! test-dir "resume-lantern" {:role "toolResult" :toolCallId "tc-1" :content "wick trimmed"})
+      (session-helper/append-message! test-dir "resume-lantern" {:role "assistant" :content "Lantern looks ready"})
+      (let [writer        (StringWriter.)
+            _response     (sut/dispatch-line {:state-dir test-dir :output-writer writer}
+                                             (jrpc/request-line 6 "session/load" {:sessionId "resume-lantern"}))
+            tool-replay   (second (parsed-output writer))]
+        (should= "wick trimmed" (get-in tool-replay [:params :update :rawOutput]))
+        (should= "wick trimmed" (get-in tool-replay [:params :update :content 0 :content :text]))))
+
     )
 
   (describe "session/prompt"

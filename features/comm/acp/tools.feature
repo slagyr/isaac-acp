@@ -54,7 +54,7 @@ Feature: ACP Tool Calls
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.title  | params.update.kind | params.update.rawInput.command |
       | session/update | tool_call                   | exec: echo hi        | execute            | echo hi                        |
-      | session/update | tool_call_update            |                      |                    |                                |
+      | session/update | tool_call_update            | exec: echo hi        | execute            | echo hi                        |
 
   Scenario: Tool result includes toolCallId, rawOutput, and expandable content
     Given the following model responses are queued:
@@ -71,7 +71,6 @@ Feature: ACP Tool Calls
       | session/update | tool_call                   | #*                       |                         | content                       |
       | session/update | tool_call_update            | #*                       | #*                      | content                       |
 
-  @wip
   Scenario: tool result updates repeat title, kind, and rawInput for thin ACP clients
     Given the following model responses are queued:
       | tool_call | arguments                        |

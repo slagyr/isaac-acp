@@ -66,6 +66,16 @@
       (str tool-name ": " summary)
       tool-name)))
 
+(defn- tool-call-fields [tool-call]
+  {:title    (tool-title (:name tool-call) (:arguments tool-call))
+   :kind     (tool-kind (:name tool-call))
+   :rawInput (:arguments tool-call)})
+
+(defn- tool-result-content [result]
+  [{:type    "content"
+    :content {:type "text"
+              :text (str result)}}])
+
 (defn- tool-call-notification [session-id tool-call]
   ;; status "pending" — Toad's tool-call widget renders pending as ⌛,
   ;; in_progress as nothing (literally a `pass`), completed as ✔. The
@@ -75,43 +85,36 @@
   ;; :content carries the rawInput rendered as text so Toad's
   ;; can_expand (gated on has_content) is true from the start — the
   ;; tool call is expandable to inspect arguments even mid-flight.
-  (jsonrpc/session-update session-id {:sessionUpdate "tool_call"
-                                      :status        "pending"
-                                      :toolCallId    (:id tool-call)
-                                      :title         (tool-title (:name tool-call) (:arguments tool-call))
-                                      :kind          (tool-kind (:name tool-call))
-                                      :rawInput      (:arguments tool-call)
-                                      :content       [{:type    "content"
-                                                       :content {:type "text"
-                                                                 :text (pr-str (:arguments tool-call))}}]}))
+  (jsonrpc/session-update session-id (merge {:sessionUpdate "tool_call"
+                                             :status        "pending"
+                                             :toolCallId    (:id tool-call)
+                                             :content       [{:type    "content"
+                                                              :content {:type "text"
+                                                                        :text (pr-str (:arguments tool-call))}}]}
+                                            (tool-call-fields tool-call))))
 
 (defn- replay-tool-call-notification [session-id tool-call result]
   {:jsonrpc "2.0"
    :method  "session/update"
    :params  {:sessionId session-id
-             :update    (cond-> {:sessionUpdate "tool_call"
-                                 :status        "completed"
-                                 :toolCallId    (:id tool-call)
-                                 :title         (tool-title (:name tool-call) (:arguments tool-call))
-                                 :kind          (tool-kind (:name tool-call))
-                                 :rawInput      (:arguments tool-call)}
+             :update    (cond-> (merge {:sessionUpdate "tool_call"
+                                        :status        "completed"
+                                        :toolCallId    (:id tool-call)}
+                                       (tool-call-fields tool-call))
                           (some? result)
                           (assoc :rawOutput result
-                                 :content   [{:type    "content"
-                                              :content {:type "text"
-                                                        :text (str result)}}]))}})
+                                 :content   (tool-result-content result)))}})
 
 (defn- tool-result-notification [session-id tool-call result]
   {:jsonrpc "2.0"
    :method  "session/update"
    :params  {:sessionId session-id
-             :update {:sessionUpdate "tool_call_update"
-                       :toolCallId    (:id tool-call)
-                       :status        "completed"
-                       :rawOutput     result
-                       :content       [{:type    "content"
-                                        :content {:type "text"
-                                                  :text (str result)}}]}}})
+             :update    (merge {:sessionUpdate "tool_call_update"
+                                :toolCallId    (:id tool-call)
+                                :status        "completed"
+                                :rawOutput     result
+                                :content       (tool-result-content result)}
+                               (tool-call-fields tool-call))}})
 
 (defn- tool-cancel-notification [session-id tool-call]
   {:jsonrpc "2.0"

@@ -125,6 +125,19 @@
         (should= "pending" (get-in (first notifications) [:params :update :status]))
         (should= "completed" (get-in (second notifications) [:params :update :status])))))
 
+  (it "repeats title, kind, and rawInput on completed tool_call_update for thin clients"
+    (let [writer    (StringWriter.)
+          tool-call {:id "tc-1" :name "exec" :arguments {:command "echo tide-signal"}}
+          ch        (sut/channel writer)]
+      (comm/on-tool-call ch "tool-test" tool-call)
+      (comm/on-tool-result ch "tool-test" tool-call "tide-signal")
+      (let [update (get-in (second (parsed-output writer)) [:params :update])]
+        (should= "exec: echo tide-signal" (:title update))
+        (should= "execute" (:kind update))
+        (should= {:command "echo tide-signal"} (:rawInput update))
+        (should= "tide-signal" (:rawOutput update))
+        (should= "tide-signal" (get-in update [:content 0 :content :text])))))
+
   (it "writes cancelled tool notifications with sessionId"
     (let [writer    (StringWriter.)
           tool-call {:id "tc-1" :name "exec" :arguments {:command "sleep 30"}}
