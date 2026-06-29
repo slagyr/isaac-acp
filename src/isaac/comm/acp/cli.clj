@@ -36,7 +36,9 @@
     frequencies-cli/override-option-spec))
 
 (defn- parse-option-map [raw-args]
-  (let [{:keys [options errors]} (tools-cli/parse-opts raw-args option-spec)]
+  (let [{:keys [options errors]} (tools-cli/parse-opts raw-args option-spec)
+        options (cond-> options
+                  (:create options) (update :create frequencies-cli/parse-create))]
     {:options (->> options
                    (remove (comp nil? val))
                    (into {}))
@@ -227,12 +229,28 @@
 (defn- url-encode [value]
   (java.net.URLEncoder/encode (str value) "UTF-8"))
 
+(defn- session-tags-of [opts]
+  (let [t (:session-tag opts)]
+    (cond (vector? t) t
+          t           [t]
+          :else       [])))
+
 (defn- remote-query-params [opts]
-  (cond-> []
-    (:model opts)  (conj ["model" (:model opts)])
-    (when (string? (:crew opts)) (:crew opts)) (conj ["crew" (:crew opts)])
-    (:session opts) (conj ["session" (:session opts)])
-    (:resume opts) (conj ["resume" "true"])))
+  ;; Forward the full shared frequencies + override flag set to the remote
+  ;; server, which resolves the session through the same core. --model is the
+  ;; -M alias for --with-model.
+  (let [with-model (or (:with-model opts) (:model opts))]
+    (-> (cond-> []
+          (when (string? (:crew opts)) (:crew opts)) (conj ["crew" (:crew opts)])
+          (:session opts)           (conj ["session" (:session opts)])
+          (:resume opts)            (conj ["resume" "true"])
+          (:prefer opts)            (conj ["prefer" (name (:prefer opts))])
+          (:create opts)            (conj ["create" (name (:create opts))])
+          with-model                (conj ["with-model" with-model])
+          (:with-crew opts)         (conj ["with-crew" (:with-crew opts)])
+          (:with-effort opts)       (conj ["with-effort" (str (:with-effort opts))])
+          (:with-context-mode opts) (conj ["with-context-mode" (name (:with-context-mode opts))]))
+        (into (map (fn [t] ["session-tag" t]) (session-tags-of opts))))))
 
 (defn- remote-url [opts]
   (let [base   (:remote opts)
@@ -580,20 +598,23 @@
           0)))))
 
 (defn run [opts]
-  (if (:remote opts)
-    ;; Proxy mode forwards the selection/override flags to the remote server,
-    ;; which runs the real command and validates them — no local resolution.
-    (run-remote opts)
-    (let [errors (frequencies-cli/validate-frequencies-options opts)]
-      (cond
-        (seq errors)
-        (do (doseq [error errors] (print-error! error)) 1)
+  ;; The selection/override flag contract is the same for stdio and --remote:
+  ;; validate illegal combinations up front regardless of transport. The proxy
+  ;; then forwards every frequency/override flag to the remote server (which
+  ;; resolves the session via the same shared core).
+  (let [errors (frequencies-cli/validate-frequencies-options opts)]
+    (cond
+      (seq errors)
+      (do (doseq [error errors] (print-error! error)) 1)
 
-        (= false (ensure-local-config! opts))
-        1
+      (:remote opts)
+      (run-remote opts)
 
-        :else
-        (run-local opts)))))
+      (= false (ensure-local-config! opts))
+      1
+
+      :else
+      (run-local opts))))
 
 (defn run-fn [{:keys [_raw-args] :as opts}]
   (let [{:keys [options errors]} (parse-option-map (or _raw-args []))]

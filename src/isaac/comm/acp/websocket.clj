@@ -7,6 +7,8 @@
     [isaac.fs :as fs]
     [isaac.logger :as log]
     [isaac.config.root :as root]
+    [isaac.session.frequencies :as frequencies]
+    [isaac.session.frequencies-cli :as frequencies-cli]
     [isaac.session.store.spi :as store]
     [isaac.system :as system]
     [isaac.util.jsonrpc :as dispatch]
@@ -45,25 +47,33 @@
                (doto (Thread. ^Runnable r "acp-ws-dispatch")
                  (.setDaemon true))))))
 
-(defn- requested-session-key [{:keys [query-params crew-id]}]
-  (let [session-store     (or (system/get :session-store)
-                              (store/registered-store)
-                              (store/create (root/current-root)))
-        requested-session (get query-params "session")]
+(defn- query->frequency-opts [query]
+  ;; Project the forwarded ACP query params onto the keys the shared
+  ;; frequencies-cli adapter understands, so stdio and --remote resolve a
+  ;; session the same way.
+  (cond-> {}
+    (get query "session")           (assoc :session (get query "session"))
+    (get query "crew")              (assoc :crew (get query "crew"))
+    (get query "session-tag")       (assoc :session-tag (let [v (get query "session-tag")]
+                                                          (if (sequential? v) (vec v) [v])))
+    (= "true" (get query "resume")) (assoc :resume true)
+    (get query "prefer")            (assoc :prefer (get query "prefer"))
+    (get query "create")            (assoc :create (frequencies-cli/parse-create (get query "create")))))
+
+(defn- requested-session-key [{:keys [query-params]}]
+  (let [session-store (or (system/get :session-store)
+                          (store/registered-store)
+                          (store/create (root/current-root)))
+        freq-opts     (query->frequency-opts query-params)
+        target        (frequencies/resolve-session-targets
+                        (frequencies-cli/build-frequencies freq-opts)
+                        session-store)]
     (cond
-      requested-session
-      (if (store/get-session session-store requested-session)
-        requested-session
-        ::missing-session)
-
-      (= "true" (get query-params "resume"))
-      (some->> (store/list-sessions-by-agent session-store (or crew-id "main"))
-               (sort-by :updated-at)
-               last
-               :id)
-
-      :else
-      nil)))
+      ;; explicit --session that does not exist
+      (and (:session freq-opts) (:create? target)) ::missing-session
+      ;; policy resolves to create -> let session/new open a fresh session
+      (:create? target)                            nil
+      :else                                        (:session-key target))))
 
 (defn- log-dispatch! [request message result]
   (when-let [event (event-name (:method message))]
@@ -141,8 +151,10 @@
   (let [state-dir   state-dir
         home        (or home (some-> state-dir fs/parent))
         query       (:query-params opts)
-        crew-id     (or (:crew opts) (get query "crew"))
-        model-value (or (:model-override opts) (:model opts) (get query "model"))]
+        ;; --with-crew overrides the turn crew; otherwise the selector crew. The
+        ;; legacy "model" param remains accepted alongside the shared --with-model.
+        crew-id     (or (:crew opts) (get query "with-crew") (get query "crew"))
+        model-value (or (:model-override opts) (:model opts) (get query "with-model") (get query "model"))]
     (cond-> {:cfg cfg :home home :state-dir state-dir}
             (:crew-members opts) (assoc :crew-members (:crew-members opts))
             (:models opts) (assoc :models (:models opts))

@@ -127,12 +127,12 @@ Feature: ACP Remote Proxy
     Then the stderr contains "could not connect"
     And the exit code is 1
 
-  Scenario: --model is forwarded to the remote server
+  Scenario: --with-model is forwarded to the remote server
     Given stdin is:
       """
       {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
       """
-    When isaac is run with "acp --remote ws://test/acp --model grover2"
+    When isaac is run with "acp --remote ws://test/acp --with-model grover2"
     Then the stdout has a JSON-RPC response for id 1:
       | key                       | value    |
       | result.agentInfo.model    | echo-alt |
@@ -187,7 +187,7 @@ Feature: ACP Remote Proxy
       {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
       {"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}
       """
-    When isaac is run with "acp --remote ws://test/acp --crew marvin --session tidy-comet"
+    When isaac is run with "acp --remote ws://test/acp --session tidy-comet"
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.content.text |
       | session/update | user_message_chunk          | Howdy.                     |
@@ -195,4 +195,23 @@ Feature: ACP Remote Proxy
     And the stdout has a JSON-RPC response for id 2:
       | key              | value      |
       | result.sessionId | tidy-comet |
+
+  Scenario: --session-tag is forwarded and resolves a tagged session remotely
+    Given the following sessions exist:
+      | name        | tags          |
+      | tagged-sess | #{:project/coil} |
+    And session "tagged-sess" has transcript:
+      | type    | message.role | message.content |
+      | message | user         | Tagged?         |
+      | message | assistant    | Indeed.         |
+    And stdin is:
+      """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+      {"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}
+      """
+    When isaac is run with "acp --remote ws://test/acp --session-tag project/coil"
+    Then the stdout has a JSON-RPC response for id 2:
+      | key              | value       |
+      | result.sessionId | tagged-sess |
+    And the exit code is 0
     And the exit code is 0
