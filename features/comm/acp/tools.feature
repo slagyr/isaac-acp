@@ -70,3 +70,19 @@ Feature: ACP Tool Calls
       | method         | params.update.sessionUpdate | params.update.toolCallId | params.update.rawOutput | params.update.content[0].type |
       | session/update | tool_call                   | #*                       |                         | content                       |
       | session/update | tool_call_update            | #*                       | #*                      | content                       |
+
+  @wip
+  Scenario: tool result updates repeat title, kind, and rawInput for thin ACP clients
+    Given the following model responses are queued:
+      | tool_call | arguments                        |
+      | exec      | {"command": "echo tide-signal"} |
+    When the ACP client sends request 44:
+      | key                   | value          |
+      | method                | session/prompt |
+      | params.sessionId      | tool-test      |
+      | params.prompt[0].type | text           |
+      | params.prompt[0].text | Ring the bell  |
+    Then the ACP agent sends notifications:
+      | method         | params.update.sessionUpdate | params.update.title     | params.update.kind | params.update.rawInput.command |
+      | session/update | tool_call                   | exec: echo tide-signal  | execute            | echo tide-signal               |
+      | session/update | tool_call_update            | exec: echo tide-signal  | execute            | echo tide-signal               |

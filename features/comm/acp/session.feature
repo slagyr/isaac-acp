@@ -98,3 +98,24 @@ Feature: ACP Session Lifecycle
       | session/update | user_message_chunk          |                          |                      | check the logs             |
       | session/update | tool_call                   | tc-1                     | completed            |                            |
       | session/update | agent_message_chunk         |                          |                      | found 3 errors             |
+
+  @wip
+  Scenario: session/load replays a string tool result as ACP content and rawOutput
+    Given the following sessions exist:
+      | name        |
+      | resume-test |
+    And session "resume-test" has transcript:
+      | type       | id   | message.role | message.content     | name | arguments               |
+      | message    |      | user         | inspect the lantern |      |                         |
+      | toolCall   | tc-1 |              |                     | read | {"file_path":"lantern"} |
+      | toolResult | tc-1 |              | wick trimmed        |      |                         |
+      | message    |      | assistant    | Lantern looks ready |      |                         |
+    When the ACP client sends request 6:
+      | key              | value        |
+      | method           | session/load |
+      | params.sessionId | resume-test  |
+    Then the ACP agent sends notifications:
+      | method         | params.update.sessionUpdate | params.update.toolCallId | params.update.status | params.update.rawOutput | params.update.content[0].content.text |
+      | session/update | user_message_chunk          |                          |                      |                         | inspect the lantern                    |
+      | session/update | tool_call                   | tc-1                     | completed            | wick trimmed            | wick trimmed                           |
+      | session/update | agent_message_chunk         |                          |                      |                         | Lantern looks ready                    |
