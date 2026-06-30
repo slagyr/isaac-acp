@@ -1,4 +1,8 @@
-{:tasks
+{:deps {io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
+                                                        :git/sha "44e824c6eded90301ed1aba8ed3948c66725ee43"
+                                                        :deps/root "spec-support"}}
+
+ :tasks
  ;; Tests run via JVM clojure aliases (deps.edn :spec / :features), matching
  ;; the sibling consumers (cron/hail). When a ../isaac-agent checkout exists,
  ;; the :dev-local alias overrides the pinned agent/server/foundation deps with
@@ -10,8 +14,9 @@
             "-M:dev-local"
             "-M"))
 
-  config-bypass-lint {:doc "Fail on raw config slurp/read outside isaac.config.*"
-                      :task (shell "bb" "config_bypass_lint.bb" "src")}
+  config-bypass-lint {:doc "Fail on raw config slurp/read outside isaac.config.* (isaac-foundation-test-support)"
+                      :requires ([isaac.foundation.config-bypass-lint :as lint])
+                      :task (apply lint/lint! (or (seq *command-line-args*) ["src"]))}
 
   spec     {:doc  "Run ACP unit specs"
             :task (apply shell "clojure" (str alias-prefix ":spec") *command-line-args*)}
