@@ -10,6 +10,9 @@
             "-M:dev-local"
             "-M"))
 
+  config-bypass-lint {:doc "Fail on raw config slurp/read outside isaac.config.*"
+                      :task (shell "bb" "config_bypass_lint.bb" "src")}
+
   spec     {:doc  "Run ACP unit specs"
             :task (apply shell "clojure" (str alias-prefix ":spec") *command-line-args*)}
 
@@ -18,7 +21,8 @@
                       (apply shell "clojure" (str alias-prefix ":features") *command-line-args*))}
 
   ci       {:doc  "Run all specs and features"
-            :task (do (shell "bb" "spec")
+            :task (do (run 'config-bypass-lint)
+                      (shell "bb" "spec")
                       (shell "bb" "features"))}
 
   clean    {:doc  "Remove the target/ build dir (gherclj-generated specs, etc.)"
