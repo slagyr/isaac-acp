@@ -1,6 +1,7 @@
 (ns isaac.comm.acp
   (:require
     [isaac.comm.protocol :as comm]
+    [isaac.comm.render :as render]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.logger :as log]
     [isaac.util.jsonrpc :as jrpc]))
@@ -9,7 +10,7 @@
   (jrpc/write-message! output-writer message))
 
 (defn- normalize-text-chunk [text]
-  (some-> text str))
+  (some-> text render/present-for-markdown))
 
 (defn- text-notification [session-id text]
   (jsonrpc/session-update session-id {:sessionUpdate "agent_message_chunk"

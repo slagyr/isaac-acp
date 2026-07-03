@@ -3,6 +3,7 @@
     [cheshire.core :as json]
     [clojure.string :as str]
     [isaac.comm.protocol :as comm]
+    [isaac.comm.render :as render]
     [isaac.comm.acp :as sut]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.fs :as fs]
@@ -85,6 +86,15 @@
                                                   :content {:type "text"
                                                             :text (pr-str {:command "echo hi"})}}]}]]
                  @calls))))
+
+  (it "wraps preformatted slash blocks for markdown clients"
+    (let [writer (StringWriter.)
+          ch     (sut/channel writer)]
+      (comm/on-text-chunk ch "agent:main:acp:direct:user1"
+                          (render/preformatted-chunk "Session Status\nCrew main"))
+      (let [text (get-in (first (parsed-output writer)) [:params :update :content :text])]
+        (should (re-find #"```text" text))
+        (should (re-find #"Session Status" text)))))
 
   (it "preserves whitespace-bearing text chunks in session/update notifications"
     (let [writer (StringWriter.)
