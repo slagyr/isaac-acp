@@ -49,6 +49,7 @@
 
 (defn- state-dir [opts]
   (or (:state-dir opts)
+      (:root opts)
       (some-> (:home opts) (str "/.isaac"))
       (str (home-dir opts) "/.isaac")))
 

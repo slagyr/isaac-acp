@@ -59,17 +59,33 @@
     (fs/mkdirs fs* (fs/parent path))
     (fs/spit fs* path (pr-str data))))
 
+(defn- write-root-config! [root data]
+  (let [path (str root "/config/isaac.edn")
+        fs*  (system/get :fs)]
+    (fs/mkdirs fs* (fs/parent path))
+    (fs/spit fs* path (pr-str data))))
+
+(defn- with-user-home [path f]
+  (let [original (System/getProperty "user.home")]
+    (try
+      (System/setProperty "user.home" path)
+      (f)
+      (finally
+        (System/setProperty "user.home" original)))))
+
 (defn- run-main! [argv opts]
-  (let [stdin-content (or (:stdin opts) "")
-        output-writer (StringWriter.)
-        error-writer  (StringWriter.)]
+  (let [stdin-content  (or (:stdin opts) "")
+        output-writer  (StringWriter.)
+        error-writer   (StringWriter.)
+        home-override  (:home opts)
+        extra-opts     (dissoc opts :stdin :home)]
     (registry/register! (sut/make-command))
     (registry/register! (chat-cli/make-command))
     (binding [*in*               (BufferedReader. (StringReader. stdin-content))
               *out*              output-writer
               *err*              error-writer
-              home/*user-home*   (or (:home opts) home/*user-home*)
-              main/*extra-opts*  (dissoc opts :stdin)]
+              home/*user-home*   (or home-override home/*user-home*)
+              main/*extra-opts*  extra-opts]
       {:exit   (main/run argv)
        :output (str output-writer)
        :stderr (str error-writer)})))
@@ -103,6 +119,29 @@
         (should= 1 exit)
         (should (str/includes? stderr "no config found"))
         (should (str/includes? stderr "config/isaac.edn")))))
+
+  (it "prefers the explicit --root over user-home-derived defaults via main/run"
+    (let [explicit-root "/tmp/acp-explicit-root/.isaac"
+          state-dir     "/tmp/acp-ignored-home/.isaac"
+          session-id    "root-wins"]
+      (delete-tree! "/tmp/acp-explicit-root")
+      (delete-tree! "/tmp/acp-ignored-home")
+      (with-user-home "/tmp/acp-ignored-home"
+        (fn []
+          (write-root-config! explicit-root {:defaults  {:crew "main" :model "grover"}
+                                             :crew      {"main" {:soul "You are Isaac." :model "grover"}}
+                                             :models    {"grover" {:model "echo" :provider "grover"}}
+                                             :providers {"grover" {}}})
+          (session-helper/create-session! explicit-root session-id {:crew "main"})
+          (session-helper/create-session! state-dir session-id {:crew "main"})
+          (let [server-opts (#'sut/build-server-opts {:root explicit-root})]
+            (should= explicit-root (:state-dir server-opts)))
+          (let [{:keys [output exit]} (run-main! ["--root" explicit-root "acp" "--session" session-id]
+                                                 {:stdin (str (jrpc/request-line 1 "initialize" {:protocolVersion 1})
+                                                              (jrpc/request-line 2 "session/prompt" {:sessionId session-id
+                                                                                                     :prompt [{:type "text" :text "hi"}]}))})]
+            (should= 0 exit)
+            (should-not (str/includes? output "no model configured for crew: main")))))))
 
   (it "returns 0 when stdin is empty"
     (should= 0 (:exit (run-with-stdin "" base-opts))))
@@ -250,6 +289,17 @@
       (should= 1 exit)
       (should (str/includes? stderr "unknown model"))
       (should (str/includes? stderr "nonexistent"))))
+
+  (it "prefers the explicit --root over user-home-derived defaults when proxying to a remote server"
+    (let [explicit-root "/test/acp-remote-explicit/.isaac"
+          home-dir      "/test/acp-remote-home"]
+      (write-root-config! explicit-root {:acp {:proxy-reconnect-delay-ms 7}})
+      (write-config! home-dir {:acp {:proxy-reconnect-delay-ms 99}})
+      (with-user-home home-dir
+        (fn []
+          (let [opts (#'sut/remote-proxy-defaults {:root explicit-root})]
+            (should= explicit-root (:state-dir opts))
+            (should= 7 (:acp-proxy-reconnect-delay-ms opts)))))))
 
   (it "proxies requests over a remote websocket connection"
     (let [request  (jrpc/request-line 1 "initialize" {:protocolVersion 1})
