@@ -7,9 +7,6 @@
     [isaac.comm.acp :as sut]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.fs :as fs]
-    [isaac.module.loader :as module-loader]
-    [isaac.comm.registry :as registry]
-    [isaac.server.routes :as routes]
     [isaac.system :as system]
     [speclj.core :refer :all])
   (:import (java.io StringWriter)))
@@ -20,23 +17,6 @@
        (mapv #(json/parse-string % true))))
 
 (describe "ACP channel"
-
-  (it "registers the /acp WebSocket route when the ACP module activates"
-    (system/with-system {:fs (fs/real-fs)}
-      (binding [registry/*registry* (atom (registry/fresh-registry))
-                routes/*registry*    (atom (routes/fresh-registry))]
-        (let [module-index (merge (module-loader/builtin-index)
-                                  {:isaac.comm.acp
-                                   {:manifest {:id                 :isaac.comm.acp
-                                               :version            "0.1.0"
-                                               :isaac.server/route [{:method  :get
-                                                                     :path    "/acp"
-                                                                     :handler 'isaac.comm.acp.websocket/handler}]}}})]
-          (module-loader/clear-activations!)
-          (should-not (routes/route-registered? :get "/acp"))
-          (module-loader/activate! :isaac.comm.acp module-index)
-          (should= [] (module-loader/process-manifest-berths! module-index))
-          (should (routes/route-registered? :get "/acp"))))))
 
   (it "exposes the AcpComm constructor and no longer exposes AcpChannel"
     (should-not-throw (requiring-resolve 'isaac.comm.acp/->AcpComm))

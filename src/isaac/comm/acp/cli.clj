@@ -1,26 +1,21 @@
 ;; mutation-tested: 2026-05-06
 (ns isaac.comm.acp.cli
   (:require
-    [isaac.cli.api :as cli-api]
     [cheshire.core :as json]
-    [clojure.tools.cli :as tools-cli]
     [clojure.string :as str]
+    [clojure.tools.cli :as tools-cli]
+    [isaac.cli.api :as cli-api]
     [isaac.cli.registry :as registry]
-    [isaac.comm.acp :as acp]
-    [isaac.comm.acp.cli.queue :as queue]
     [isaac.comm.acp.server :as server]
-    [isaac.util.jsonrpc :as jrpc]
-    [isaac.util.jsonrpc :as dispatch]
-    [isaac.util.ws-client :as ws]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
-    [isaac.logger :as log]
-    [isaac.scheduler.runtime :as scheduler]
     [isaac.nexus :as nexus]
+    [isaac.util.jsonrpc :as jrpc]
     [isaac.session.frequencies :as frequencies]
     [isaac.session.frequencies-cli :as frequencies-cli]
     [isaac.session.store.spi :as store]
-    [isaac.tool.builtin :as builtin]))
+    [isaac.tool.builtin :as builtin]
+    [isaac.util.jsonrpc :as dispatch]))
 
 (def option-spec
   ;; Session selection (--session/--crew/--session-tag/--resume/--create/--prefer)
@@ -28,10 +23,8 @@
   ;; adapter, the same set the prompt command uses. ACP attaches to ONE resolved
   ;; session (no --reach).
   (concat
-    [["-v" "--verbose"     "Log inbound method names to stderr"]
-     ["-r" "--remote URL"  "Proxy ACP over a remote WebSocket endpoint"]
-     ["-t" "--token TOKEN" "Bearer token for remote ACP authentication"]
-     ["-h" "--help"        "Show help"]]
+    [["-v" "--verbose" "Log inbound method names to stderr"]
+     ["-h" "--help"    "Show help"]]
     frequencies-cli/frequencies-option-spec
     frequencies-cli/override-option-spec))
 
@@ -59,32 +52,31 @@
     (let [cfg          (:cfg server-opts)
           named-models (:models (config/normalize-config cfg))]
       (boolean (or (get named-models model-alias)
-                    (config-resolve/parse-model-ref model-alias))))))
+                   (config-resolve/parse-model-ref model-alias))))))
 
 (defn- build-server-opts [opts]
-  (let [home         (home-dir opts)
+  (let [home           (home-dir opts)
         requested-sdir (state-dir opts)
-        raw-config   (:config (config/load-config-result {:root requested-sdir}))
-        cfg          (config/normalize-config raw-config)
-        sdir         (or (:state-dir cfg) (:stateDir cfg) requested-sdir)
-        out          (or (:output-writer opts) *out*)
-        crew-members (or (when (map? (:crew opts)) (:crew opts)) (:agents opts))
-        models    (:models opts)
-        prov-cfgs (:provider-configs opts)
-        crew-id   (when (string? (:crew opts)) (:crew opts))]
+        raw-config     (:config (config/load-config-result {:root requested-sdir}))
+        cfg            (config/normalize-config raw-config)
+        sdir           (or (:state-dir cfg) (:stateDir cfg) requested-sdir)
+        out            (or (:output-writer opts) *out*)
+        crew-members   (or (when (map? (:crew opts)) (:crew opts)) (:agents opts))
+        models         (:models opts)
+        prov-cfgs      (:provider-configs opts)
+        crew-id        (when (string? (:crew opts)) (:crew opts))]
     ;; Refresh the process-wide config snapshot from the config we just loaded
     ;; for this run. The per-turn handlers (e.g. session-prompt-handler) read
-    ;; config/snapshot as their config base — mirroring the websocket path's
-    ;; per-turn refresh — so without committing here a stdio run would reuse a
-    ;; stale snapshot left by a previous run in the same JVM (notably across
-    ;; test scenarios), resolving the wrong crew model.
+    ;; config/snapshot as their config base, so without committing here a stdio
+    ;; run would reuse a stale snapshot left by a previous run in the same JVM
+    ;; (notably across test scenarios), resolving the wrong crew model.
     (when (nil? crew-members)
       (config/set-snapshot! raw-config "ACP stdio run config refresh"))
     (cond-> {:state-dir sdir :home home :output-writer out}
-      crew-members (assoc :crew-members crew-members)
-      models    (assoc :models models)
-      prov-cfgs (assoc :provider-configs prov-cfgs)
-      crew-id   (assoc :crew-id crew-id)
+      crew-members        (assoc :crew-members crew-members)
+      models              (assoc :models models)
+      prov-cfgs           (assoc :provider-configs prov-cfgs)
+      crew-id             (assoc :crew-id crew-id)
       (nil? crew-members) (assoc :cfg cfg))))
 
 (defn- write-result! [result]
@@ -107,12 +99,6 @@
       (store/registered-store)
       (store/create (nexus/get :state-dir))))
 
-(defn- find-most-recent-session [crew-id]
-  (when (nexus/get :state-dir)
-    (->> (store/list-sessions-by-agent (session-store) crew-id)
-         (sort-by :updated-at)
-         last)))
-
 (defn- attach-session-handler [handlers session-key]
   (assoc handlers "session/new" (fn [_ _] {:sessionId session-key})))
 
@@ -126,10 +112,10 @@
 (defn- run-loop-verbose [handlers]
   (let [dispatch* dispatch/dispatch]
     (with-redefs [dispatch/dispatch (fn [dispatch-handlers message]
-                                 (when-let [method (:method message)]
-                                   (binding [*out* *err*]
-                                     (println method)))
-                                 (dispatch* dispatch-handlers message))]
+                                      (when-let [method (:method message)]
+                                        (binding [*out* *err*]
+                                          (println method)))
+                                      (dispatch* dispatch-handlers message))]
       (run-loop handlers))))
 
 (defn- print-error! [message]
@@ -143,421 +129,6 @@
       (when (:missing-config? result)
         (print-error! (get-in result [:errors 0 :value]))
         false))))
-
-(defn- write-line! [line]
-  (.write *out* line)
-  (.write *out* "\n")
-  (.flush *out*))
-
-(defn- parse-line [line]
-  (try
-    (json/parse-string line true)
-    (catch Exception _ nil)))
-
-(defn- heartbeat-line?
-  "Server emits {jsonrpc 2.0, method $/heartbeat} every 30s to keep
-   the WebSocket warm against NAT/proxy idle timeouts. The frame is
-   for the proxy↔server transport layer only — forwarding it to Toad
-   surfaces as a useless 'Method not found' error per tick."
-  [line]
-  (= "$/heartbeat" (:method (parse-line line))))
-
-(defn- message-session-id [message]
-  (or (get-in message [:params :sessionId])
-      (get-in message [:result :sessionId])))
-
-(defn- cache-session-id! [session-id* line]
-  (when-let [session-id (some-> line parse-line message-session-id)]
-    (reset! session-id* session-id)))
-
-(defn- crew-id [{:keys [crew]}]
-  (or (when (string? crew) crew) "main"))
-
-(defn- default-session-id [opts]
-  (or (:session opts)
-      (some-> (find-most-recent-session (crew-id opts)) :id)))
-
-(defn- status-notification [session-id text]
-  (let [text (cond
-               (str/ends-with? text "\n\n") text
-               (str/ends-with? text "\n")   (str text "\n")
-               :else                          (str text "\n\n"))]
-    (assoc-in (acp/text-update session-id text) [:params :update :sessionUpdate] "agent_thought_chunk")))
-
-(defn- write-status-notification! [session-id* opts text]
-  (when-let [session-id (or @session-id* (default-session-id opts))]
-    (reset! session-id* session-id)
-    (jrpc/write-message! *out* (status-notification session-id text))))
-
-(defn- write-thought-chunk! [session-id text]
-  ;; Direct thought-chunk emit for a specific session — used by the
-  ;; per-session prompt queue (isaac.comm.acp.cli.queue) which knows
-  ;; exactly which session the chunk is for, no fallback to the cached
-  ;; session-id* needed.
-  (when session-id
-    (jrpc/write-message! *out* (status-notification session-id text))))
-
-(defn- request-id [line]
-  (try
-    (:id (json/parse-string line true))
-    (catch Exception _ nil)))
-
-(defn- proxy-event-name [method]
-  ({"initialize"     :acp-proxy/initialize
-    "session/new"    :acp-proxy/session-new
-    "session/prompt" :acp-proxy/session-prompt} method))
-
-(defn- log-proxy-message! [url line]
-  (let [message    (json/parse-string line true)
-        event      (proxy-event-name (:method message))
-        session-id (get-in message [:params :sessionId])]
-    (when event
-      (log/debug event
-                 :sessionId session-id
-                 :url       url))))
-
-(defn- authentication-error? [error]
-  (let [cause      (or (ex-cause error) error)
-        class-name (.getName (class cause))
-        message    (or (.getMessage cause) "")]
-    (or (= "java.net.http.WebSocketHandshakeException" class-name)
-        (re-find #"(?i)401|unauthorized|authentication failed" message))))
-
-(defn- remote-headers [token]
-  (cond-> {}
-    token (assoc "Authorization" (str "Bearer " token))))
-
-(defn- url-encode [value]
-  (java.net.URLEncoder/encode (str value) "UTF-8"))
-
-(defn- session-tags-of [opts]
-  (let [t (:session-tag opts)]
-    (cond (vector? t) t
-          t           [t]
-          :else       [])))
-
-(defn- remote-query-params [opts]
-  ;; Forward the full shared frequencies + override flag set to the remote
-  ;; server, which resolves the session through the same core. --model is the
-  ;; -M alias for --with-model.
-  (let [with-model (or (:with-model opts) (:model opts))]
-    (-> (cond-> []
-          (when (string? (:crew opts)) (:crew opts)) (conj ["crew" (:crew opts)])
-          (:session opts)           (conj ["session" (:session opts)])
-          (:resume opts)            (conj ["resume" "true"])
-          (:prefer opts)            (conj ["prefer" (name (:prefer opts))])
-          (:create opts)            (conj ["create" (name (:create opts))])
-          with-model                (conj ["with-model" with-model])
-          (:with-crew opts)         (conj ["with-crew" (:with-crew opts)])
-          (:with-effort opts)       (conj ["with-effort" (str (:with-effort opts))])
-          (:with-context-mode opts) (conj ["with-context-mode" (name (:with-context-mode opts))]))
-        (into (map (fn [t] ["session-tag" t]) (session-tags-of opts))))))
-
-(defn- remote-url [opts]
-  (let [base   (:remote opts)
-        params (remote-query-params opts)]
-    (if (empty? params)
-      base
-      (str base
-           (if (str/includes? base "?") "&" "?")
-           (str/join "&" (map (fn [[k v]] (str k "=" (url-encode v))) params))))))
-
-(defn- connect-remote! [factory url token]
-  (factory url {:headers (remote-headers token)}))
-
-(defn- start-input-reader! [opts]
-  (let [reader       (java.io.BufferedReader. *in*)
-        read-line-fn (or (:acp-read-line-fn opts) #(.readLine reader))
-        queue        (java.util.concurrent.LinkedBlockingQueue.)]
-    (future
-      (loop []
-        (if-let [line (read-line-fn)]
-          (do
-            (.put queue {:type :stdin :line line})
-            (recur))
-          (.put queue {:type :stdin-closed}))))
-    queue))
-
-(defn- start-remote-reader! [conn]
-  (let [queue (java.util.concurrent.LinkedBlockingQueue.)]
-    (future
-      (loop []
-        (let [message-line (ws/ws-receive! conn)]
-          (cond
-            (nil? message-line)
-            (.put queue {:type :connection-lost})
-
-            (:error message-line)
-            (.put queue {:type :connection-error :error (:error message-line)})
-
-            :else
-            (do
-              (.put queue {:type :message :line message-line})
-              (recur))))))
-    queue))
-
-(declare send-request! safe-close!)
-
-(def ^:private reconnect-task-id :acp-proxy/reconnect)
-
-(defn- reconnect-handler
-  "Scheduler handler for one reconnect attempt. Scheduler invokes with
-   one ctx-map arg (ignored). Returns nil on success so the task
-   completes; throws on failure so the scheduler's :retry policy
-   reschedules with exponential backoff.
-
-   `bound-fn` captures the caller's dynamic bindings — most importantly
-   `*out*` — so write-status-notification! writes to the proxy's stdout
-   writer rather than the scheduler thread's default *out*."
-  [_scheduler active? conn* remote-queue* disconnected? session-id*
-   pending-request* factory url token opts]
-  (bound-fn [_run-ctx]
-    (when @active?
-      (log/info :acp-proxy/reconnect-attempt :url url)
-      (let [new-conn (connect-remote! factory url token)]
-        (reset! conn* new-conn)
-        (reset! remote-queue* (start-remote-reader! new-conn))
-        (reset! disconnected? false)
-        (write-status-notification! session-id* opts "reconnected to remote")
-        (doseq [{:keys [line]} @pending-request*]
-          (try (send-request! @conn* session-id* url line)
-               (catch Exception _ nil)))
-        (log/debug :acp-proxy/connected :url url)))))
-
-(defn- schedule-reconnect!
-  "Schedules a one-shot reconnect attempt against scheduler-instance. On
-   failure the scheduler's :retry policy reschedules with exponential
-   backoff (base→max) — no manual loop. cancel! before reschedule so a
-   second drop while still trying doesn't error on duplicate id."
-  [scheduler-instance active? conn* remote-queue* disconnected? session-id*
-   pending-request* factory url token opts]
-  ;; Scheduler requires :pos? for delays — clamp to 1ms minimum so legacy
-  ;; opts that pass 0 still work (the old hand-rolled loop accepted 0 fine).
-  (let [base-delay (max 1 (or (:acp-proxy-reconnect-delay-ms opts) 1000))
-        max-delay  (max 1 (or (:acp-proxy-reconnect-max-delay-ms opts) 5000))]
-    (scheduler/cancel! scheduler-instance reconnect-task-id)
-    (scheduler/schedule!
-      scheduler-instance
-      {:id             reconnect-task-id
-       :trigger        {:kind :delay :ms base-delay}
-       :handler        (reconnect-handler scheduler-instance active? conn* remote-queue*
-                                          disconnected? session-id* pending-request*
-                                          factory url token opts)
-       :on-error       :retry
-       :backoff-ms     base-delay
-       :max-backoff-ms max-delay
-       :retry-attempts Long/MAX_VALUE})))
-
-(defn- connection-lost! [scheduler-instance active? conn* remote-queue* disconnected?
-                          session-id* pending-request* factory url token opts]
-  (when-not @disconnected?
-    (reset! disconnected? true)
-    (write-status-notification! session-id* opts "remote connection lost")
-    (log/debug :acp-proxy/disconnected :url url)
-    (safe-close! @conn*)
-    (reset! conn* nil)
-    (schedule-reconnect! scheduler-instance active? conn* remote-queue* disconnected?
-                         session-id* pending-request* factory url token opts)))
-
-(defn- poll-event [queue timeout-ms]
-  (.poll queue timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS))
-
-(defn- send-request! [conn session-id* url line]
-  (cache-session-id! session-id* line)
-  (log-proxy-message! url line)
-  (ws/ws-send! conn line))
-
-(defn- safe-close! [conn]
-  (try
-    (some-> conn ws/ws-close!)
-    (catch Exception _
-      nil)))
-
-(defn- await-connected! [active? disconnected?]
-  (loop []
-    (cond
-      (not @active?)        false
-      (not @disconnected?)  true
-      :else                 (do
-                              (Thread/sleep 10)
-                              (recur)))))
-
-(defn- forward-input-line! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts line]
-  (loop []
-    (cond
-      (not @active?) nil
-      @disconnected? (when (await-connected! active? disconnected?) (recur))
-      :else
-      (let [sent? (try
-                    (send-request! @conn* session-id* url line)
-                    (when-let [id (request-id line)]
-                      (swap! pending-request* conj {:id id :line line}))
-                    true
-                    (catch Exception _
-                      (connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)
-                      false))]
-        (when-not sent?
-          (when (await-connected! active? disconnected?)
-            (recur)))))))
-
-(defn- handle-stdin-line! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* line]
-  ;; Pre-forward decision for session/prompt and session/cancel via
-  ;; isaac.comm.acp.cli.queue. Any other line (initialize,
-  ;; session/new, …) flows straight through.
-  (let [forward! (fn [l]
-                   (forward-input-line! scheduler-instance active? conn* remote-queue*
-                                        disconnected? session-id* pending-request*
-                                        factory url token opts l))]
-    (cond
-      (queue/prompt-line? line)
-      (let [session-id (queue/message-session-id line)
-            [decision _line] (queue/handle-prompt queue-state* session-id line)]
-        (case decision
-          :forward (forward! line)
-          :queue   (write-thought-chunk! session-id queue/queued-thought-text)
-          :reject  (write-thought-chunk! session-id queue/queue-full-thought-text)))
-
-      (queue/cancel-line? line)
-      (let [session-id (queue/message-session-id line)
-            [decision _line] (queue/handle-cancel queue-state* session-id line)]
-        (case decision
-          :forward     (forward! line)
-          :clear-queue (write-thought-chunk! session-id queue/queue-cleared-thought-text)))
-
-      :else
-      (forward! line))))
-
-(defn- remote-proxy-defaults [opts]
-  (let [home       (or (:home opts) (System/getProperty "user.home"))
-        state-dir  (str home "/.isaac")
-        config-acp (:acp (:config (config/load-config-result {:root state-dir})))]
-    (merge {:acp-proxy-reconnect-delay-ms     (or (:acp-proxy-reconnect-delay-ms opts)
-                                                  (:proxy-reconnect-delay-ms config-acp)
-                                                  1000)
-            :acp-proxy-reconnect-max-delay-ms (or (:acp-proxy-reconnect-max-delay-ms opts)
-                                                  (:proxy-reconnect-max-delay-ms config-acp)
-                                                  5000)}
-           opts)))
-
-(defn- run-stdin-thread! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* input-queue]
-  (future
-    (loop []
-      (when @active?
-        (let [event (poll-event input-queue 50)]
-          (cond
-            (nil? event)
-            (recur)
-
-            (= :stdin-closed (:type event))
-            nil
-
-            (= :stdin (:type event))
-            (do (handle-stdin-line! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* (:line event))
-                (recur))
-
-            :else
-            (recur)))))))
-
-(defn- drain-queue-on-turn-end! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* line]
-  ;; If this server frame carries stopReason :end_turn, signal the
-  ;; per-session queue. If a queued prompt was waiting, forward it as
-  ;; the next session/prompt.
-  (when (queue/turn-end? line)
-    (when-let [session-id (or (queue/message-session-id line) @session-id*)]
-      (let [outcome (queue/handle-turn-end queue-state* session-id)]
-        (when (= :drain (first outcome))
-          (forward-input-line! scheduler-instance active? conn* remote-queue*
-                               disconnected? session-id* pending-request*
-                               factory url token opts (second outcome)))))))
-
-(defn- run-remote-thread! [scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state*]
-  (future
-    (loop []
-      (when @active?
-        (let [event (poll-event @remote-queue* 10)]
-          (when event
-            (case (:type event)
-              :message
-              (when-not (heartbeat-line? (:line event))
-                (cache-session-id! session-id* (:line event))
-                (write-line! (:line event))
-                (when-let [response-id (request-id (:line event))]
-                  (swap! pending-request* (fn [reqs] (vec (remove #(= response-id (:id %)) reqs)))))
-                (drain-queue-on-turn-end! scheduler-instance active? conn* remote-queue*
-                                          disconnected? session-id* pending-request*
-                                          factory url token opts queue-state* (:line event)))
-
-              :connection-error
-              (connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)
-
-              :connection-lost
-              (connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts)
-
-              nil))
-          (recur))))))
-
-(defn- run-remote [opts]
-  (let [opts    (remote-proxy-defaults opts)
-        url     (remote-url opts)
-        token   (:token opts)
-        factory (or (:ws-connection-factory opts) ws/connect!)]
-    (when-let [state-dir (:state-dir opts)]
-      (nexus/register! [:state-dir] state-dir)
-      (store/register! (or (config/snapshot "ACP CLI remote session-store bootstrap") {}) state-dir))
-    (try
-      (let [conn*               (atom (connect-remote! factory url token))
-            remote-queue*       (atom (start-remote-reader! @conn*))
-            disconnected?       (atom false)
-            session-id*         (atom (default-session-id opts))
-            pending-request*    (atom [])
-            active?             (atom true)
-            input-queue         (start-input-reader! opts)
-            ;; Per-session prompt queue + cancel-tracking. Seeded with
-            ;; opts when tests want to pre-populate a queued state.
-            queue-state*        (or (:acp-proxy-queue-state* opts)
-                                    (atom (queue/fresh-state)))
-            ;; Private 1-thread scheduler dedicated to this proxy invocation.
-            ;; The proxy only schedules one task (the reconnect retry); tick
-            ;; submits the handler and exits before the handler runs, so
-            ;; there's nothing to starve. Hard-cap explicitly because the
-            ;; scheduler's default of (max 2 (* 2 cpu-count)) is sized for
-            ;; the server-wide scheduler, not a per-CLI-invocation one.
-            ;; tick-ms 1 so test backoffs (1ms) don't get delayed by the
-            ;; default 50ms tick.
-            scheduler-instance  (-> (scheduler/create {:pool-size 1})
-                                    (assoc :tick-ms 1)
-                                    (scheduler/start!))
-            eof-grace-ms        (or (:acp-proxy-eof-grace-ms opts) 50)
-            pending-timeout-ms  (or (:acp-proxy-pending-timeout-ms opts) 2000)]
-        (log/debug :acp-proxy/connected :url url)
-        (let [stdin-fut  (run-stdin-thread! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state* input-queue)
-              remote-fut (run-remote-thread! scheduler-instance active? conn* remote-queue* disconnected? session-id* pending-request* factory url token opts queue-state*)]
-          (try
-            @stdin-fut
-            (let [pending-deadline (+ (System/currentTimeMillis) pending-timeout-ms)]
-              (loop []
-                (when (and (seq @pending-request*)
-                           (< (System/currentTimeMillis) pending-deadline))
-                  (Thread/sleep 1)
-                  (recur))))
-            (let [grace-deadline (+ (System/currentTimeMillis) eof-grace-ms)]
-              (loop []
-                (when (< (System/currentTimeMillis) grace-deadline)
-                  (Thread/sleep 1)
-                  (recur))))
-            0
-             (finally
-               (reset! active? false)
-               (future-cancel remote-fut)
-               (try @remote-fut (catch Exception _))
-               (scheduler/shutdown! scheduler-instance)
-               (log/debug :acp-proxy/disconnected :url url)
-               (safe-close! @conn*)))))
-      (catch Exception e
-        (print-error! (if (authentication-error? e)
-                        "authentication failed"
-                        (str "could not connect to remote ACP endpoint: " url)))
-        1))))
 
 (defn- run-local [opts]
   (let [server-opts (build-server-opts opts)]
@@ -587,7 +158,7 @@
         ;; policy resolves to create, let the server open a fresh session.
         (let [attach-key   (when-not (:create? target) (:session-key target))
               server-opts' (cond-> server-opts
-                             model-alias          (assoc :model-override model-alias)
+                             model-alias           (assoc :model-override model-alias)
                              (:with-crew override) (assoc :crew-id (:with-crew override)))
               handlers     (cond-> (server/handlers server-opts')
                              attach-key (attach-session-handler attach-key))]
@@ -599,17 +170,10 @@
           0)))))
 
 (defn run [opts]
-  ;; The selection/override flag contract is the same for stdio and --remote:
-  ;; validate illegal combinations up front regardless of transport. The proxy
-  ;; then forwards every frequency/override flag to the remote server (which
-  ;; resolves the session via the same shared core).
   (let [errors (frequencies-cli/validate-frequencies-options opts)]
     (cond
       (seq errors)
       (do (doseq [error errors] (print-error! error)) 1)
-
-      (:remote opts)
-      (run-remote opts)
 
       (= false (ensure-local-config! opts))
       1

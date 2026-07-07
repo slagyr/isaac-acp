@@ -3,84 +3,43 @@
     (java.io StringWriter)
     (java.util.concurrent LinkedBlockingQueue TimeUnit))
   (:require
+    [cheshire.core :as json]
     [clojure.edn :as edn]
     [clojure.java.io :as io]
     [clojure.string :as str]
-    [cheshire.core :as json]
-    [gherclj.core :as g :refer [defgiven defwhen defthen helper!]]
+    [gherclj.core :as g :refer [defgiven defthen defwhen helper!]]
     [isaac.cli.registry :as cli-registry]
-    [isaac.comm.acp.chat-cli :as chat-cli]
     [isaac.comm.acp.cli :as acp-cli]
-    [isaac.foundation.cli-steps :as cli-steps]
     [isaac.comm.acp.server :as acp-server]
-    [isaac.util.jsonrpc :as dispatch]
-    [isaac.comm.acp.websocket :as acp-websocket]
-    [isaac.util.ws-client :as ws]
     [isaac.config.loader :as config]
+    [isaac.foundation.cli-steps :as cli-steps]
     [isaac.fs :as fs]
     [isaac.llm.api.grover :as grover]
     [isaac.llm.http :as llm-http]
-    [isaac.main :as main]
     [isaac.nexus :as nexus]
-    [isaac.session.session-steps :as session-steps]
     [isaac.step-tables :as match]
-    [ring.util.codec :as codec]))
+    [isaac.util.jsonrpc :as dispatch]))
 
 (helper! isaac.comm.acp.acp-steps)
 
-;; Tests exercise the CLI commands via main/run, which normally registers
+;; Tests exercise the CLI command via main/run, which normally registers
 ;; module-contributed commands by reading the user's isaac.edn and running
-;; module discovery. In feature tests there's no on-disk isaac.edn for the
-;; ACP module, so we register the commands directly at step-ns load time —
-;; the equivalent of what production gets via the :cli manifest extension.
+;; module discovery. In feature tests there's no on-disk isaac.edn for the ACP
+;; module, so we register the command directly at step-ns load time — the
+;; equivalent of what production gets via the :cli manifest extension.
 (cli-registry/register! (acp-cli/make-command))
-(cli-registry/register! (chat-cli/make-command))
-
-(declare ensure-loopback-proxy!)
-
-;; isaac's cli_steps used to auto-detect `acp.proxy-transport = loopback` in
-;; server config and call ensure-loopback-proxy! before invoking main. That
-;; ACP-specific knowledge has moved here. We hook before-scenario so any
-;; scenario whose Background sets the config gets the loopback transport +
-;; the extra-opts (:ws-connection-factory, :acp-proxy-eof-grace-ms 0) wired
-;; through isaac's generic :main-extra-opts seam.
-;; Registered as :isaac-run-preflight so isaac.server.cli.cli-steps/isaac-run
-;; calls us right before main/run — after the Background's `config:` step has
-;; set :server-config but before any extra-opts get computed.
-(defn- on-disk-config
-  "Raw (un-normalized) isaac.edn the `config:` step persisted to the mem-fs.
-   Read raw — the loader strips non-schema keys like :acp, so the loaded
-   config wouldn't carry :acp/:proxy-transport."
-  []
-  (let [cfg-root (or (g/get :runtime-root-dir) (g/get :root))
-        fs*      (or (g/get :mem-fs) (nexus/get :fs) (fs/real-fs))
-        path     (when cfg-root (str cfg-root "/config/isaac.edn"))]
-    #_{:clj-kondo/ignore [:invalid-arity]}
-    (when (and path (fs/exists? fs* path))
-      (try (edn/read-string (fs/slurp fs* path)) (catch Throwable _ nil)))))
 
 (defn- acp-isaac-run-preflight! []
-  (let [root       (g/get :root)
-        root-home  (when (and root (str/ends-with? root "/.isaac"))
-                     (fs/parent root))
-        ;; The `config:` step may set :server-config (server step) or persist
-        ;; to the on-disk isaac.edn (agent step); check both for loopback.
-        loopback?  (or (= "loopback" (get-in (g/get :server-config) [:acp :proxy-transport]))
-                       (= "loopback" (get-in (on-disk-config) [:acp :proxy-transport])))]
-    (when (and loopback? (nil? (g/get :acp-remote-connection-factory)))
-      (ensure-loopback-proxy!))
+  (let [root      (g/get :root)
+        root-home (when (and root (str/ends-with? root "/.isaac"))
+                    (fs/parent root))]
     (g/update! :main-extra-opts
                (fn [opts]
                  (cond-> (or opts {})
                    root      (assoc :state-dir root)
-                   root-home (assoc :home root-home)
-                   loopback? (merge {:ws-connection-factory  (g/get :acp-remote-connection-factory)
-                                     :acp-proxy-eof-grace-ms 0}))))))
+                   root-home (assoc :home root-home))))))
 
 (cli-steps/register-isaac-run-preflight! acp-isaac-run-preflight!)
-
-(defn- query-params [query-string]
-  (codec/form-decode (or query-string "")))
 
 (def ^:private await-timeout-ms 3000)
 
@@ -96,21 +55,14 @@
   (or (g/get :state-dir)
       (g/get :root)))
 
-(defn- close-loopback! []
-  (when-let [client (g/get :acp-loopback-client)]
-    (ws/ws-close! client))
-  (when-let [server (g/get :acp-loopback-server)]
-    (ws/ws-close! server))
-  (when-let [^LinkedBlockingQueue queue (g/get :proxy-stdin-queue)]
-    (.put queue :closed))
-  (when-let [runner (g/get :acp-proxy-runner)]
-    (future-cancel runner))
-  (when-let [server-runner (g/get :acp-loopback-server-runner)]
-    (future-cancel server-runner))
+(defn- close-acp-state! []
   (when-let [turn* (g/get :acp-turn-future)]
-    (future-cancel turn*)))
+    (future-cancel turn*))
+  (g/dissoc! :acp-turn-future)
+  (g/dissoc! :live-output-writer)
+  (g/dissoc! :acp-output-offset))
 
-(g/after-scenario close-loopback!)
+(g/after-scenario close-acp-state!)
 
 (defn- parse-value [value]
   (cond
@@ -180,9 +132,6 @@
                     (remove str/blank?))]
     (enqueue-outgoing! (json/parse-string line true))))
 
-(defn- enqueue-output-line! [line]
-  (enqueue-outgoing! (json/parse-string line true)))
-
 (defn- record-dispatch-result! [result]
   (cond
     (nil? result)
@@ -202,73 +151,77 @@
     :else
     (enqueue-outgoing! result)))
 
+(defn- dispatch-result [line]
+  (let [state-dir        (effective-state-dir)
+        mem-fs           (g/get :mem-fs)
+        live-writer      (when state-dir (StringWriter.))
+        llm-http-stub    (g/get :llm-http-stub)
+        custom-fn        (g/get :acp-dispatch-fn)
+        fallback-fn      (fn [input-line]
+                           (dispatch/handle-line (or (g/get :acp-handlers) {}) input-line))
+        connection-error (fn [url]
+                           {:error :connection-refused :message (str "Could not connect to " url)})
+        do-dispatch!     (fn []
+                           (cond
+                             custom-fn
+                             (record-dispatch-result! (custom-fn line))
+
+                             state-dir
+                             (let [agents (g/get :agents)
+                                   models (g/get :models)
+                                   result (acp-server/dispatch-line
+                                            (cond-> {:state-dir        state-dir
+                                                     :provider-configs (g/get :provider-configs)
+                                                     :output-writer    live-writer}
+                                              agents (assoc :crew-members agents)
+                                              models (assoc :models models)
+                                              (and (nil? agents) (nil? models))
+                                              (assoc :cfg (:config (config/load-config-result {:root state-dir}))))
+                                            line)]
+                               (enqueue-output-lines! live-writer)
+                               (record-dispatch-result! result))
+
+                             :else
+                             (record-dispatch-result! (fallback-fn line))))
+        run-dispatch!    (fn []
+                           (let [run! #(if mem-fs
+                                         (nexus/-with-nested-nexus {:fs mem-fs} (do-dispatch!))
+                                         (do-dispatch!))]
+                             (case llm-http-stub
+                               :connection-refused
+                               (with-redefs [llm-http/post-json!         (fn [url _headers _body & _] (connection-error url))
+                                             llm-http/post-ndjson-stream! (fn [url _headers _body _on-chunk & _] (connection-error url))]
+                                 (run!))
+                               (run!))))]
+    {:state-dir   state-dir
+     :live-writer live-writer
+     :run!        run-dispatch!}))
+
 (defn- dispatch-message! [message async?]
-  (let [line          (json/generate-string message)
-        state-dir     (effective-state-dir)
-        live-writer   (when state-dir (StringWriter.))
-        mem-fs        (g/get :mem-fs)
-        llm-http-stub (g/get :llm-http-stub)
-        custom-fn     (g/get :acp-dispatch-fn)
-        fallback-fn   (fn [input-line]
-                        (dispatch/handle-line (or (g/get :acp-handlers) {}) input-line))
-        connection-refused (fn [url]
-                             {:error :connection-refused :message (str "Could not connect to " url)})
-        do-dispatch!  (fn []
-                        (cond
-                          custom-fn
-                          (record-dispatch-result! (custom-fn line))
-
-                          state-dir
-                          (let [agents (g/get :agents)
-                                models (g/get :models)
-                                writer live-writer
-                                result (acp-server/dispatch-line (cond-> {:state-dir        state-dir
-                                                                           :provider-configs (g/get :provider-configs)
-                                                                           :output-writer    writer}
-                                                                    agents (assoc :crew-members agents)
-                                                                    models (assoc :models models)
-                                                                    (and (nil? agents) (nil? models)) (assoc :cfg (:config (config/load-config-result {:root state-dir}))))
-                                                                  line)]
-                            (enqueue-output-lines! writer)
-                            (record-dispatch-result! result))
-
-                          :else
-                          (record-dispatch-result! (fallback-fn line))))
-        run-dispatch! (fn []
-                        (let [run! #(if mem-fs
-                                      (nexus/-with-nested-nexus {:fs mem-fs} (do-dispatch!))
-                                      (do-dispatch!))]
-                          (case llm-http-stub
-                            :connection-refused
-                            (with-redefs [llm-http/post-json!         (fn [url _headers _body & _] (connection-refused url))
-                                          llm-http/post-ndjson-stream! (fn [url _headers _body _on-chunk & _] (connection-refused url))]
-                              (run!))
-                            (run!))))]
+  (let [line                         (json/generate-string message)
+        {:keys [state-dir live-writer run!]} (dispatch-result line)]
     (cond
       (and async? (= "session/prompt" (:method message)))
       (let [turn* (future
-                    (when live-writer
+                    (when (and state-dir live-writer)
                       (g/assoc! :live-output-writer live-writer)
                       (g/assoc! :acp-output-offset 0))
                     (try
-                      (run-dispatch!)
+                      (run!)
                       (finally
-                        (when live-writer
-                          (g/dissoc! :live-output-writer)))))]
+                        (g/dissoc! :live-output-writer))))]
         (g/assoc! :acp-turn-future turn*))
 
       (= "session/cancel" (:method message))
       (do
-        (run-dispatch!)
+        (run!)
         (grover/release-delay!))
 
-       :else
-       (run-dispatch!))))
+      :else
+      (run!))))
 
 (defn- send-client-line! [line async?]
-  (if-let [^LinkedBlockingQueue queue (g/get :proxy-stdin-queue)]
-    (.put queue line)
-    (dispatch-message! (json/parse-string line true) async?)))
+  (dispatch-message! (json/parse-string line true) async?))
 
 (declare output-messages)
 
@@ -305,141 +258,11 @@
 (defn- output-messages []
   (let [output (if-let [writer (g/get :live-output-writer)] (str writer) (g/get :output))]
     (->> (str/split-lines (or output ""))
-       (remove str/blank?)
-       (mapv #(json/parse-string % true)))))
+         (remove str/blank?)
+         (mapv #(json/parse-string % true)))))
 
 (defn- await-output-response [id]
   (await-message #(= id (:id %))))
-
-(defn- loopback-request []
-  (or (g/get :acp-loopback-request) {}))
-
-(defn- loopback-server-opts [state-dir agents models provider-cfgs]
-  (let [request     (loopback-request)
-        query       (query-params (:query-string request))
-        agent-id    (or (get query "crew") (get query "agent") "main")
-        cfg         (when (and state-dir (nil? agents) (nil? models))
-                      (:config (config/load-config-result {:root state-dir})))]
-    {:request     {:headers      {"x-forwarded-for" "loopback"}
-                   :query-string (:query-string request)
-                   :uri          "/acp"}
-     :server-opts (cond-> {:state-dir        state-dir
-                           :query-params     query
-                           :provider-configs provider-cfgs
-                           :agent-id         agent-id
-                           :model-override   (get query "model")}
-                     agents (assoc :crew-members agents)
-                    models (assoc :models models)
-                    cfg    (assoc :cfg cfg))}))
-
-(defn- loopback-result [state-dir agents models provider-cfgs writer line]
-  (let [{:keys [request server-opts]} (loopback-server-opts state-dir agents models provider-cfgs)
-        server-opts (assoc server-opts :output-writer writer)]
-    (acp-websocket/dispatch-line server-opts request line)))
-
-(defn- emit-loopback-result! [server-conn result]
-  (when result
-    (cond
-      (contains? result :notifications)
-      (do
-        (doseq [notification (:notifications result)]
-          (ws/ws-send! server-conn (json/generate-string notification)))
-        (when-let [response (:response result)]
-          (ws/ws-send! server-conn (json/generate-string response))))
-
-      (contains? result :response)
-      (ws/ws-send! server-conn (json/generate-string (:response result)))
-
-      :else
-      (ws/ws-send! server-conn (json/generate-string result)))))
-
-(defn- await-release! []
-  (when-let [release* (g/get :loopback-final-response-release)]
-    @release*))
-
-(defn- emit-final-response! [server-conn result]
-  (await-release!)
-  (emit-loopback-result! server-conn result))
-
-(defn- hold-final-response? [line result]
-  (and (g/get :loopback-hold-final-response?)
-       (= "session/prompt" (:method (json/parse-string line true)))
-       (or (contains? result :response)
-           (contains? result :result))))
-
-(defn- serve-loopback-connection! [server-conn state-dir agents models provider-cfgs]
-  (loop []
-    (when-let [line (ws/ws-receive! server-conn)]
-      (let [writer (StringWriter.)
-            result (loopback-result state-dir agents models provider-cfgs writer line)]
-        (doseq [message-line (ws/written-lines writer)]
-          (ws/ws-send! server-conn message-line))
-        (if (hold-final-response? line result)
-          (emit-final-response! server-conn result)
-          (emit-loopback-result! server-conn result)))
-      (recur))))
-
-(defn- start-loopback-server! [transport state-dir agents models provider-cfgs mem-fs]
-  (future
-    (let [run-loop (fn []
-                    (loop []
-                      (if-let [server-conn (ws/accept-loopback! transport)]
-                        (do
-                          (serve-loopback-connection! server-conn state-dir agents models provider-cfgs)
-                          (when-not @(:permanent? transport)
-                            (recur)))
-                        (when-not @(:permanent? transport)
-                          (recur)))))]
-      (if mem-fs
-        (nexus/-with-nested-nexus {:fs mem-fs} (run-loop))
-        (run-loop)))))
-
-(defn ensure-loopback-proxy! []
-  (let [transport      (or (g/get :acp-reconnectable-loopback)
-                           (let [t (ws/reconnectable-loopback)]
-                             (g/assoc! :acp-reconnectable-loopback t)
-                             t))
-        state-dir      (effective-state-dir)
-        agents         (g/get :agents)
-        models         (g/get :models)
-        provider-cfgs  (g/get :provider-configs)
-        mem-fs         (g/get :mem-fs)]
-    (when-not (g/get :acp-loopback-server-runner)
-      (g/assoc! :acp-loopback-server-runner (start-loopback-server! transport state-dir agents models provider-cfgs mem-fs)))
-    (g/assoc! :acp-remote-connection-factory
-              (fn [url _]
-                (g/assoc! :acp-loopback-request {:query-string (when (str/includes? url "?")
-                                                                 (subs url (inc (str/index-of url "?"))))})
-                (ws/connect-loopback! transport url)))))
-
-(defn- parse-argv [args]
-  (if (str/blank? args)
-    []
-    (loop [s (str/trim args) tokens []]
-      (if (str/blank? s)
-        tokens
-        (cond
-          (str/starts-with? s "'")
-          (let [end (str/index-of s "'" (long 1))]
-            (if end
-              (recur (str/trim (subs s (inc end))) (conj tokens (subs s 1 end)))
-              (conj tokens (subs s 1))))
-
-          (str/starts-with? s "\"")
-          (let [end (str/index-of s "\"" (long 1))]
-            (if end
-              (recur (str/trim (subs s (inc end))) (conj tokens (subs s 1 end)))
-              (conj tokens (subs s 1))))
-
-          :else
-          (let [[tok rest-s] (str/split s #"\s+" 2)]
-            (recur (or rest-s "") (conj tokens tok))))))))
-
-(defn- next-proxy-line []
-  (let [^LinkedBlockingQueue queue (g/get :proxy-stdin-queue)]
-    (when-let [line (.poll queue 5 TimeUnit/SECONDS)]
-      (when-not (= :closed line)
-        line))))
 
 (defn acp-client-sends-request [id table]
   (send-client-line! (json/generate-string (assoc (table->message table)
@@ -470,16 +293,16 @@
         (g/should= [] (:failures result))))))
 
 (defn acp-agent-sends-notifications [table]
-  (let [expected-count   (count (:rows table))
-        notification?    #(and (contains? % :method) (not (contains? % :id)))
-        matching-window  (fn [notifications]
-                           (let [notifications (vec notifications)]
-                             (some (fn [start]
-                                     (let [candidate (subvec notifications start (+ start expected-count))
-                                           result    (match/match-entries table candidate)]
-                                       (when (= [] (:failures result)) candidate)))
-                                   (range 0 (inc (- (count notifications) expected-count))))))
-        deadline         (+ (System/currentTimeMillis) await-timeout-ms)]
+  (let [expected-count  (count (:rows table))
+        notification?   #(and (contains? % :method) (not (contains? % :id)))
+        matching-window (fn [notifications]
+                          (let [notifications (vec notifications)]
+                            (some (fn [start]
+                                    (let [candidate (subvec notifications start (+ start expected-count))
+                                          result    (match/match-entries table candidate)]
+                                      (when (= [] (:failures result)) candidate)))
+                                  (range 0 (inc (- (count notifications) expected-count))))))
+        deadline        (+ (System/currentTimeMillis) await-timeout-ms)]
     (loop [notifications []]
       (if-let [candidate (when (<= expected-count (count notifications))
                            (matching-window notifications))]
@@ -507,75 +330,6 @@
 
 (defn notification-content-not-contains [text]
   (g/should-not (str/includes? (last-notification-content) text)))
-
-
-(defn acp-proxy-running [args]
-  (let [transport      (or (g/get :acp-reconnectable-loopback)
-                           (let [t (ws/reconnectable-loopback)]
-                             (g/assoc! :acp-reconnectable-loopback t)
-                             t))
-        stdin-queue    (LinkedBlockingQueue.)
-        output-writer  (StringWriter.)
-        error-writer   (StringWriter.)
-        argv           (parse-argv args)
-        state-dir      (effective-state-dir)
-        provider-cfgs  (g/get :provider-configs)
-        mem-fs         (g/get :mem-fs)
-        cfg            (or (g/get :server-config) (on-disk-config) {})
-        server-runner* (start-loopback-server! transport state-dir (g/get :agents) (g/get :models) provider-cfgs mem-fs)
-        run*           (future
-                         (let [run! #(binding [*in*  (java.io.BufferedReader. (java.io.StringReader. ""))
-                                               *out* output-writer
-                                               *err* error-writer
-                                               main/*extra-opts* {:state-dir state-dir
-                                                                  :provider-configs provider-cfgs
-                                                                  :acp-proxy-max-reconnects (get-in cfg [:acp :proxy-max-reconnects])
-                                                                  :acp-proxy-reconnect-delay-ms (get-in cfg [:acp :proxy-reconnect-delay-ms])
-                                                                  :acp-proxy-reconnect-max-delay-ms (get-in cfg [:acp :proxy-reconnect-max-delay-ms])
-                                                                  :acp-read-line-fn next-proxy-line
-                                                                  :ws-connection-factory (fn [url _]
-                                                                                           (g/assoc! :acp-loopback-request {:query-string (when (str/includes? url "?")
-                                                                                                                                            (subs url (inc (str/index-of url "?"))))})
-                                                                                           (ws/connect-loopback! transport url))}]
-                                        (g/assoc! :exit-code (main/run argv)))]
-                           (if mem-fs
-                             (nexus/-with-nested-nexus {:fs mem-fs} (run!))
-                             (run!))))]
-    (g/assoc! :acp-loopback-server-runner server-runner*)
-    (g/assoc! :proxy-stdin-queue stdin-queue)
-    (g/assoc! :live-output-writer output-writer)
-    (g/assoc! :live-error-writer error-writer)
-    (g/assoc! :acp-proxy-runner run*)))
-
-(defn stdin-receives [content]
-  (let [lines (str/split-lines (if (str/ends-with? content "\n") content (str content "\n")))
-        ^LinkedBlockingQueue queue (g/get :proxy-stdin-queue)]
-    (doseq [line lines]
-      (.put queue line))))
-
-(defn loopback-drops []
-  (let [transport (g/get :acp-reconnectable-loopback)]
-    (when-not (ws/await-loopback-connection! transport 1000)
-      (throw (ex-info "loopback connection was not established before drop" {})))
-    (ws/drop-loopback! transport)))
-
-(defn loopback-restored []
-  (ws/restore-loopback! (g/get :acp-reconnectable-loopback)))
-
-(defn loopback-drops-permanently []
-  (let [transport (g/get :acp-reconnectable-loopback)]
-    (when-not (ws/await-loopback-connection! transport 1000)
-      (throw (ex-info "loopback connection was not established before permanent drop" {})))
-    (ws/drop-loopback-permanently! transport)))
-
-(defn loopback-holds-final-response []
-  (g/assoc! :loopback-hold-final-response? true)
-  (g/assoc! :loopback-final-response-release (promise)))
-
-(defn loopback-releases-final-response []
-  (g/assoc! :loopback-hold-final-response? false)
-  (when-let [release* (g/get :loopback-final-response-release)]
-    (deliver release* :ok)))
 
 (defn isaac-home-contains-config [home doc-string]
   (let [abs-home    (absolute-path home)
@@ -652,36 +406,6 @@
 
 (defthen "the notification content does not contain {text:string}" isaac.comm.acp.acp-steps/notification-content-not-contains)
 
-(defgiven "the acp proxy is running with {args:string}" isaac.comm.acp.acp-steps/acp-proxy-running
-  "Starts 'isaac acp ...' in a background future wired to a reconnectable
-   loopback transport. Captures stdout/stderr for assertion, feeds stdin
-   from :proxy-stdin-queue. Requires the loopback transport to be active
-   (usually via config acp.proxy-transport=loopback).")
-
-(defwhen "stdin receives:" isaac.comm.acp.acp-steps/stdin-receives
-  "Pushes the heredoc content line-by-line onto the proxy's stdin queue.
-   Pairs with 'the acp proxy is running with'.")
-
-(defwhen "the loopback connection drops" isaac.comm.acp.acp-steps/loopback-drops
-  "Simulates a connection drop after the loopback transport reports an
-   established connection. The transport still accepts reconnects — use
-   'drops permanently' to block them.")
-
-(defwhen "the loopback connection is restored" isaac.comm.acp.acp-steps/loopback-restored)
-
-(defwhen "the loopback connection drops permanently" isaac.comm.acp.acp-steps/loopback-drops-permanently
-  "Drops the connection AND rejects all future reconnect attempts. Use
-   when a scenario needs to prove the proxy keeps retrying without ever
-   succeeding.")
-
-(defgiven "the loopback holds the final response" isaac.comm.acp.acp-steps/loopback-holds-final-response
-  "Makes the loopback server block before returning the final response
-   to the client. Release it explicitly with 'the loopback releases the
-   final response'. Used to test mid-response cancellation / timeout
-   behavior.")
-
-(defwhen "the loopback releases the final response" isaac.comm.acp.acp-steps/loopback-releases-final-response)
-
 (defthen "the stdout has a JSON-RPC response for id {id:int}:" isaac.comm.acp.acp-steps/output-contains-json-rpc-response
   "Polls stdout until a JSON-RPC response matching the given id appears
    (or times out). Matches the response object against the table.")
@@ -690,7 +414,7 @@
 
 (defgiven "the ACP commands are registered" isaac.comm.acp.acp-steps/acp-commands-registered
   "No-op step that forces gherclj to load ACP step namespaces so command
-   registration and isaac-run preflights are installed for CLI features.")
+   registration is installed for CLI features.")
 
 (defgiven "an in-memory Isaac state directory {path:string}" isaac.foundation.root-steps/in-memory-state
   "Compatibility route for older ACP features that still refer to an
