@@ -25,13 +25,15 @@
   (it "declares a resolvable module factory"
     (should-not-be-nil (requiring-resolve (get (manifest) :factory))))
 
-  (it "activates and registers the /acp route when berths are processed"
+  (it "registers only the acp CLI command when berths are processed"
     (system/with-system {:fs (fs/real-fs)}
       (binding [comm-registry/*registry* (atom (comm-registry/fresh-registry))
                 routes/*registry*        (atom (routes/fresh-registry))]
         (let [module-index (merge (module-loader/builtin-index)
                                   {:isaac.comm.acp {:manifest (manifest)}})]
-          (should-not (routes/route-registered? :get "/acp"))
+          (registry/clear-module-commands!)
           (should= :activated (module-loader/activate! :isaac.comm.acp module-index))
           (should= [] (module-loader/process-manifest-berths! module-index))
-          (should (routes/route-registered? :get "/acp")))))))
+          (should-not-be-nil (registry/get-command "acp"))
+          (should-be-nil (registry/get-command "chat"))
+          (should-not (routes/route-registered? :get "/acp")))))))

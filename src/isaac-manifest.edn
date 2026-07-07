@@ -1,32 +1,13 @@
 {:id          :isaac.comm.acp
  :version     "0.1.5"
  :factory     isaac.module.protocol/module
- :description "ACP (Agent Communication Protocol) for isaac — stdio agent surface, WebSocket transport, and the chat TUI launcher."
+ :description "ACP (Agent Communication Protocol) for isaac — stdio agent surface only."
 
- :isaac.config/schema
- {:acp {:schema {:name        :acp
-                 :type        :map
-                 :description "Agent Communication Protocol configuration"
-                 :schema      {:proxy-max-reconnects         {:type        :int
-                                                              :description "Maximum reconnect attempts for ACP proxy"}
-                               :proxy-reconnect-delay-ms     {:type        :int
-                                                              :description "Base reconnect delay in milliseconds for ACP proxy"}
-                               :proxy-reconnect-max-delay-ms {:type        :int
-                                                              :description "Maximum reconnect delay in milliseconds for ACP proxy"}}}}}
-
- ;; HTTP route contributed via the :isaac.server/route berth.
- :isaac.server/route
- [{:method :get :path "/acp" :handler isaac.comm.acp.websocket/handler}]
-
- ;; CLI commands contributed via the :isaac/cli berth, keyed by command
+ ;; CLI command contributed via the :isaac/cli berth, keyed by command
  ;; id (the name derives from the key). Symbols get requiring-resolve'd
  ;; at registration time, so :option-spec and :run-fn point at vars
  ;; defined in this module.
  :isaac/cli
- {:acp  {:usage     "acp [options]"
-         :summary   "Run Isaac as an ACP agent over stdio"
-         :namespace isaac.comm.acp.cli}
-  :chat {:usage     "chat [options]"
-         :summary   "Launch Toad chat UI"
-         :namespace isaac.comm.acp.chat-cli}}}
-
+ {:acp {:usage     "acp [options]"
+        :summary   "Run Isaac as an ACP agent over stdio"
+        :namespace isaac.comm.acp.cli}}}

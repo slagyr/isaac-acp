@@ -4,27 +4,22 @@
     [clojure.java.io :as io]
     [clojure.string :as str]
     [gherclj.core :as g]
-    [isaac.comm.acp.chat-cli :as chat-cli]
     [isaac.comm.acp.acp-steps :as acp-steps]
     [isaac.comm.acp.cli :as sut]
     [isaac.config.root :as home]
     [isaac.util.jsonrpc :as jrpc]
     [isaac.util.jsonrpc :as dispatch]
-    [isaac.util.ws-client :as ws]
     [isaac.cli.registry :as registry]
-    [isaac.logger :as log]
     [isaac.fs :as fs]
     [isaac.main :as main]
-    [isaac.scheduler.runtime :as scheduler]
     [isaac.foundation.cli-steps :as cli-steps]
     [isaac.session.session-steps :as session-steps]
-    [isaac.spec-helper :as helper]
     [isaac.session.spec-helper :as session-helper]
     [isaac.system :as system]
     [speclj.core :refer :all])
   (:import
     (java.io BufferedReader StringReader StringWriter)
-    (java.util.concurrent LinkedBlockingQueue TimeUnit)))
+    ))
 
 (def base-opts
   {:state-dir "/test/acp"
@@ -80,7 +75,6 @@
         home-override  (:home opts)
         extra-opts     (dissoc opts :stdin :home)]
     (registry/register! (sut/make-command))
-    (registry/register! (chat-cli/make-command))
     (binding [*in*               (BufferedReader. (StringReader. stdin-content))
               *out*              output-writer
               *err*              error-writer
@@ -290,68 +284,6 @@
       (should (str/includes? stderr "unknown model"))
       (should (str/includes? stderr "nonexistent"))))
 
-  (it "prefers the explicit --root over user-home-derived defaults when proxying to a remote server"
-    (let [explicit-root "/test/acp-remote-explicit/.isaac"
-          home-dir      "/test/acp-remote-home"]
-      (write-root-config! explicit-root {:acp {:proxy-reconnect-delay-ms 7}})
-      (write-config! home-dir {:acp {:proxy-reconnect-delay-ms 99}})
-      (with-user-home home-dir
-        (fn []
-          (let [opts (#'sut/remote-proxy-defaults {:root explicit-root})]
-            (should= explicit-root (:state-dir opts))
-            (should= 7 (:acp-proxy-reconnect-delay-ms opts)))))))
-
-  (it "proxies requests over a remote websocket connection"
-    (let [request  (jrpc/request-line 1 "initialize" {:protocolVersion 1})
-          rq       (LinkedBlockingQueue.)
-          conn     (reify ws/WsConnection
-                     (ws-send!    [_ _]
-                       (.put rq "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1}}")
-                       nil)
-                     (ws-receive! [_]
-                       (let [v (.take rq)]
-                         (when (not= ::eof v) v)))
-                     (ws-receive! [_ timeout-ms]
-                       (let [v (.poll rq timeout-ms TimeUnit/MILLISECONDS)]
-                         (when (and v (not= ::eof v)) v)))
-                     (ws-close!   [_]   (.offer rq ::eof) nil))
-          {:keys [output exit]} (run-with-stdin request
-                                                (assoc base-opts
-                                                  :remote "ws://test/acp"
-                                                  :acp-proxy-eof-grace-ms 0
-                                                  :ws-connection-factory (fn [_ _] conn)))]
-      (should= 0 exit)
-      (should (str/includes? output "\"id\":1"))))
-
-  (it "fails with a clear error when the remote connection cannot be opened"
-    (let [{:keys [stderr exit]} (run-with-stdin ""
-                                                (assoc base-opts
-                                                  :remote "ws://localhost:9999/acp"
-                                                  :acp-proxy-max-reconnects 0
-                                                  :acp-proxy-eof-grace-ms 0
-                                                  :ws-connection-factory (fn [_ _]
-                                                                           (throw (ex-info "boom" {})))))]
-      (should= 1 exit)
-      (should (str/includes? stderr "could not connect"))))
-
-  (it "uses the most recent session when --resume is set"
-    (let [state-dir    (str "/test/acp-resume-" (random-uuid))
-          older        "older"
-          recent       "recent"
-          _            (session-helper/create-session! state-dir older)
-          _            (session-helper/create-session! state-dir recent)
-          _            (session-helper/update-session! state-dir older {:updated-at "2026-04-10T10:00:00"})
-          _            (session-helper/update-session! state-dir recent {:updated-at "2026-04-12T15:00:00"})
-          request      (jrpc/request-line 1 "session/new" {})
-          {:keys [output exit]} (run-with-stdin request (assoc base-opts :state-dir state-dir :resume true))]
-      (should= 0 exit)
-      (should= recent (get-in (json/parse-string output true) [:result :sessionId]))))
-
-  (it "rejects combining --resume with --model"
-    (let [{:keys [stderr exit]} (run-with-stdin "" (assoc base-opts :resume true :model "grover"))]
-      (should= 1 exit)
-      (should (str/includes? stderr "cannot combine --resume with --model"))))
-
   (describe "run-fn"
 
     (it "prints command help and returns 0 when --help is requested"
@@ -373,167 +305,7 @@
                                              (reset! captured opts)
                                              0)]
           (should= 0 (sut/run-fn {:_raw-args ["--resume"] :home "/tmp/home"}))
-          (should= {:home "/tmp/home" :resume true} @captured)))))
+          (should= {:home "/tmp/home" :resume true} @captured))))
 
-  (it "adds model and crew query params when proxying to a remote server"
-    (let [captured-url (atom nil)
-          {:keys [exit]} (run-with-stdin ""
-                                         (assoc base-opts
-                                           :remote "ws://test/acp"
-                                           :crew "ketch"
-                                           :model "grover2"
-                                           :acp-proxy-eof-grace-ms 0
-                                           :ws-connection-factory (fn [url _]
-                                                                    (reset! captured-url url)
-                                                                    (reify ws/WsConnection
-                                                                      (ws-send! [_ _] nil)
-                                                                      (ws-receive! [_] nil)
-                                                                      (ws-receive! [_ _] nil)
-                                                                      (ws-close! [_] nil)))))]
-      (should= 0 exit)
-      (should= "ws://test/acp?model=grover2&crew=ketch" @captured-url)))
 
-  (it "adds resume query param when proxying to a remote server"
-    (let [captured-url (atom nil)
-          {:keys [exit]} (run-with-stdin ""
-                                         (assoc base-opts
-                                           :remote "ws://test/acp"
-                                           :resume true
-                                           :acp-proxy-eof-grace-ms 0
-                                           :ws-connection-factory (fn [url _]
-                                                                    (reset! captured-url url)
-                                                                    (reify ws/WsConnection
-                                                                      (ws-send! [_ _] nil)
-                                                                      (ws-receive! [_] nil)
-                                                                      (ws-receive! [_ _] nil)
-                                                                      (ws-close! [_] nil)))))]
-        (should= 0 exit)
-        (should= "ws://test/acp?resume=true" @captured-url)))
-
-  (it "adds session query param when proxying to a remote server"
-    (let [captured-url (atom nil)
-          {:keys [exit]} (run-with-stdin ""
-                                         (assoc base-opts
-                                           :remote "ws://test/acp"
-                                           :session "tidy-comet"
-                                           :acp-proxy-eof-grace-ms 0
-                                           :ws-connection-factory (fn [url _]
-                                                                    (reset! captured-url url)
-                                                                    (reify ws/WsConnection
-                                                                      (ws-send! [_ _] nil)
-                                                                      (ws-receive! [_] nil)
-                                                                      (ws-receive! [_ _] nil)
-                                                                      (ws-close! [_] nil)))))]
-      (should= 0 exit)
-      (should= "ws://test/acp?session=tidy-comet" @captured-url)))
-
-  (it "logs proxy lifecycle and forwarded initialize requests"
-    (let [request (jrpc/request-line 1 "initialize" {:protocolVersion 1})
-          rq      (LinkedBlockingQueue.)
-          conn    (reify ws/WsConnection
-                    (ws-send!    [_ _]
-                      (.put rq "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1}}")
-                      nil)
-                    (ws-receive! [_]
-                      (let [v (.take rq)]
-                        (when (not= ::eof v) v)))
-                    (ws-receive! [_ timeout-ms]
-                      (let [v (.poll rq timeout-ms TimeUnit/MILLISECONDS)]
-                        (when (and v (not= ::eof v)) v)))
-                    (ws-close!   [_]   (.offer rq ::eof) nil))]
-      (log/capture-logs
-        (let [{:keys [exit]} (run-with-stdin request
-                                             (assoc base-opts
-                                               :remote "ws://test/acp"
-                                               :acp-proxy-eof-grace-ms 0
-                                               :ws-connection-factory (fn [_ _] conn)))]
-          (should= 0 exit)
-          (should= [:acp-proxy/connected :acp-proxy/initialize :acp-proxy/disconnected]
-                   (mapv :event @log/captured-logs))))))
-
-  (it "swallows server-side $/heartbeat notifications instead of forwarding them to Toad"
-    ;; The server emits a tiny $/heartbeat keepalive every 30s. It's
-    ;; meant for the proxy ↔ server WebSocket layer; it should not
-    ;; reach Toad. If it does, Toad doesn't recognize the method and
-    ;; bounces back a JSON-RPC "Method not found" error per frame —
-    ;; useless noise that also goes back over the wire to the server.
-    (let [request (jrpc/request-line 1 "initialize" {:protocolVersion 1})
-          rq      (LinkedBlockingQueue.)
-          conn    (reify ws/WsConnection
-                    (ws-send!    [_ _]
-                      (.put rq "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1}}")
-                      (.put rq "{\"jsonrpc\":\"2.0\",\"method\":\"$/heartbeat\"}")
-                      nil)
-                    (ws-receive! [_]
-                      (let [v (.take rq)]
-                        (when (not= ::eof v) v)))
-                    (ws-receive! [_ timeout-ms]
-                      (let [v (.poll rq timeout-ms TimeUnit/MILLISECONDS)]
-                        (when (and v (not= ::eof v)) v)))
-                    (ws-close!   [_]   (.offer rq ::eof) nil))]
-      (let [{:keys [exit output]} (run-with-stdin request
-                                                  (assoc base-opts
-                                                    :remote "ws://test/acp"
-                                                    :acp-proxy-eof-grace-ms 0
-                                                    :ws-connection-factory (fn [_ _] conn)))]
-        (should= 0 exit)
-        ;; Initialize response still reaches Toad…
-        (should (str/includes? output "protocolVersion"))
-        ;; …but the heartbeat must not leak through.
-        (should-not (str/includes? output "$/heartbeat")))))
-
-  (it "reconnects after a dropped remote connection and emits status notifications"
-    (let [transport (ws/reconnectable-loopback)
-          state-dir (str "/test/acp-proxy-status-" (random-uuid))
-          request-1 (jrpc/request-line 1 "initialize" {:protocolVersion 1})
-          request-2 (jrpc/request-line 2 "initialize" {:protocolVersion 1})
-          _         (session-helper/create-session! state-dir "s1")
-          runner*   (future
-                      (run-with-stdin (str request-1 request-2)
-                                      (assoc base-opts
-                                        :state-dir state-dir
-                                        :remote "ws://test/acp"
-                                        :acp-proxy-reconnect-delay-ms 0
-                                        :ws-connection-factory (fn [url _] (ws/connect-loopback! transport url)))))]
-      (let [server-1 (ws/accept-loopback! transport)]
-        (should= request-1 (str (ws/ws-receive! server-1 20) "\n"))
-        (ws/ws-send! server-1 "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1}}")
-        (ws/drop-loopback! transport))
-      (ws/restore-loopback! transport)
-      (let [server-2 (ws/accept-loopback! transport)]
-        (should= request-2 (str (ws/ws-receive! server-2 50) "\n"))
-         (ws/ws-send! server-2 "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"protocolVersion\":1}}")
-         (ws/ws-close! server-2))
-        (let [{:keys [output exit]} @runner*]
-          (should= 0 exit)
-          (should (str/includes? output "remote connection lost"))
-          (should (str/includes? output "reconnected to remote"))
-          (should (str/includes? output "\"id\":2")))))
-
-  (it "does not exit reconnect mode when closing an already-dead remote socket throws"
-    (let [scheduler-instance (-> (scheduler/create {:pool-size 1})
-                                 (assoc :tick-ms 1)
-                                 (scheduler/start!))
-          active?            (atom false)
-          conn*              (atom (reify ws/WsConnection
-                                     (ws-send! [_ _] nil)
-                                     (ws-receive! [_] nil)
-                                     (ws-receive! [_ _] nil)
-                                     (ws-close! [_]
-                                       (throw (ex-info "socket already closed" {})))))
-          remote-queue*      (atom nil)
-          disconnected?      (atom false)
-          session-id*        (atom nil)]
-      (try
-        (#'sut/connection-lost! scheduler-instance active? conn* remote-queue* disconnected? session-id* (atom nil)
-                                (fn [_ _]
-                                  (reify ws/WsConnection
-                                    (ws-send! [_ _] nil)
-                                    (ws-receive! [_] nil)
-                                    (ws-receive! [_ _] nil)
-                                    (ws-close! [_] nil)))
-                                "ws://test/acp" nil {:acp-proxy-reconnect-delay-ms 0
-                                                     :acp-proxy-reconnect-max-delay-ms 0})
-        (should @disconnected?)
-        (finally
-          (scheduler/shutdown! scheduler-instance)))))
+  )

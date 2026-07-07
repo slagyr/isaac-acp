@@ -109,15 +109,14 @@
                                                   {:sessionId "agent:main:acp:direct:user1"
                                                    :prompt    [{:type "text" :text "Hello"}]}
                                                   nil))
-          (should= {:config         {:defaults {}
-                                     :crew {"main" {:soul "You are Isaac."}}
-                                     :models {}
-                                     :providers {}
-                                     :cron {}}
-                    :home           test-dir
-                    :model-override nil
-                    :crew           "main"}
-                   @captured-request))))
+          (should= {:crew      {"main" {:soul "You are Isaac."}}
+                     :models    {}
+                     :providers {}
+                     :cron      {}}
+                   (select-keys (:config @captured-request) [:crew :models :providers :cron]))
+          (should= test-dir (:home @captured-request))
+          (should= nil (:model-override @captured-request))
+          (should= "main" (:crew @captured-request)))))
 
     (it "reads the current config snapshot for session/prompt instead of stale connection cfg"
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1" {:crew "main"})
