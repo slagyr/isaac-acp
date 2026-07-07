@@ -26,6 +26,11 @@
    :agents    {"main" {:name "main" :soul "You are Isaac." :model "grover"}}
    :models    {"grover" {:alias "grover" :model "echo" :provider "grover" :context-window 32768}}})
 
+(defn- output-messages [output]
+  (->> (str/split-lines (or output ""))
+       (remove str/blank?)
+       (mapv #(json/parse-string % true))))
+
 (defn- run-with-stdin [content opts]
   (binding [*in* (BufferedReader. (StringReader. content))]
     (let [result (atom nil)
@@ -34,9 +39,12 @@
       (binding [*out* output-writer
                 *err* error-writer]
         (reset! result (sut/run opts)))
-      {:output (str output-writer)
-       :stderr (str error-writer)
-       :exit   @result})))
+      (let [output (str output-writer)
+            stderr (str error-writer)]
+        {:output   output
+         :stderr   stderr
+         :messages (output-messages output)
+         :exit     @result}))))
 
 (defn- mem-run [f]
   (system/with-nested-system {:fs (fs/mem-fs)}
@@ -253,14 +261,23 @@
       (should= 0 exit)
       (should (str/includes? stderr "initialize"))))
 
-  (it "returns the attached session key for session/new when --session exists"
-    (let [state-dir    (str "/test/acp-attached-" (random-uuid))
-          session-key  "user1"
-          _            (session-helper/create-session! state-dir session-key)
-          request      (jrpc/request-line 1 "session/new" {})
-          {:keys [output exit]} (run-with-stdin request (assoc base-opts :state-dir state-dir :session session-key))]
+  (it "replays transcript notifications before returning session/new when --session exists"
+    (let [state-dir     (str "/test/acp-attached-" (random-uuid))
+          session-key   "user1"
+          _             (session-helper/create-session! state-dir session-key)
+          _             (session-helper/append-message! state-dir session-key {:role "user" :content "earlier"})
+          _             (session-helper/append-message! state-dir session-key {:role "assistant" :content "earlier reply"})
+          request       (jrpc/request-line 1 "session/new" {})
+          {:keys [messages exit]} (run-with-stdin request (assoc base-opts :state-dir state-dir :session session-key))]
       (should= 0 exit)
-      (should (str/includes? output "\"sessionId\":\"user1\""))))
+      (should= ["session/update" "session/update" nil]
+               (mapv :method messages))
+      (should= ["user_message_chunk" "agent_message_chunk"]
+               (mapv #(get-in % [:params :update :sessionUpdate]) (take 2 messages)))
+      (should= ["earlier" "earlier reply"]
+               (mapv #(get-in % [:params :update :content :text]) (take 2 messages)))
+      (should= {:sessionId "user1"}
+               (get-in (last messages) [:result]))))
 
   (it "fails when --session session does not exist"
     (let [missing "nonexistent"

@@ -99,8 +99,8 @@
       (store/registered-store)
       (store/create (nexus/get :state-dir))))
 
-(defn- attach-session-handler [handlers session-key]
-  (assoc handlers "session/new" (fn [_ _] {:sessionId session-key})))
+(defn- attach-session-handler [handlers output-writer session-key]
+  (assoc handlers "session/new" (fn [_ _] (server/attach-session-result! output-writer session-key))))
 
 (defn- run-loop [handlers]
   (let [reader (java.io.BufferedReader. *in*)]
@@ -161,7 +161,7 @@
                              model-alias           (assoc :model-override model-alias)
                              (:with-crew override) (assoc :crew-id (:with-crew override)))
               handlers     (cond-> (server/handlers server-opts')
-                             attach-key (attach-session-handler attach-key))]
+                             attach-key (attach-session-handler (:output-writer server-opts') attach-key))]
           (builtin/register-all!)
           (print-error! "isaac acp ready")
           (if (:verbose opts)

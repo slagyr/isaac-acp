@@ -55,7 +55,7 @@ Feature: ACP command
     Then the stderr contains "initialize"
     And the exit code is 0
 
-  Scenario: --session attaches the acp command to an existing session
+  Scenario: --session attaches the acp command to an existing session and replays transcript history
     Given the following sessions exist:
       | name          |
       | earlier-chat  |
@@ -69,7 +69,13 @@ Feature: ACP command
       {"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}
       """
     When isaac is run with "acp --session earlier-chat"
-    Then the stdout contains "\"sessionId\":\"earlier-chat\""
+    Then the ACP agent sends notifications:
+      | method         | params.update.sessionUpdate | params.update.content.text |
+      | session/update | user_message_chunk          | earlier                    |
+      | session/update | agent_message_chunk         | earlier reply              |
+    And the stdout has a JSON-RPC response for id 2:
+      | key              | value        |
+      | result.sessionId | earlier-chat |
     And the exit code is 0
 
   Scenario: --session fails if the session does not exist
