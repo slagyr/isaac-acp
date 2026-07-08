@@ -302,17 +302,38 @@
       (let [result (match/match-object table response)]
         (g/should= [] (:failures result))))))
 
+(defn- listed-methods-from-table [table]
+  (->> (:rows table)
+       (map #(get (zipmap (:headers table) %) "method"))
+       (remove str/blank?)
+       set))
+
+(defn- notification-message? [message]
+  (and (contains? message :method) (not (contains? message :id))))
+
+(defn- assert-no-trailing-listed-notifications! [listed-methods]
+  (let [q (outgoing-queue)]
+    (sync-output-messages! q)
+    (loop [skipped []]
+      (if-let [msg (.poll q)]
+        (if (and (notification-message? msg) (contains? listed-methods (:method msg)))
+          (do (doseq [m skipped] (.put q m))
+              (.put q msg)
+              (throw (ex-info "unexpected trailing notification for listed method"
+                              {:method (:method msg) :notification msg})))
+          (recur (conj skipped msg)))
+        (doseq [m skipped] (.put q m))))))
+
 (defn acp-agent-sends-notifications [table]
   (let [expected-count (count (:rows table))
-        notification?  #(and (contains? % :method) (not (contains? % :id)))
+        listed-methods (listed-methods-from-table table)
         deadline       (+ (System/currentTimeMillis) await-timeout-ms)
         finalize!      (fn [notifications]
                          (g/should= expected-count (count notifications))
                          (let [failures (:failures (match/match-entries table notifications))]
                            (g/assoc! :last-acp-notifications notifications)
                            (g/should= [] failures))
-                         (when-let [extra (await-message notification?)]
-                           (throw (ex-info "unexpected trailing session/update notification" {:notification extra}))))]
+                         (assert-no-trailing-listed-notifications! listed-methods))]
     (loop [notifications []]
       (cond
         (> (count notifications) expected-count)
@@ -325,8 +346,10 @@
         (let [remaining (- deadline (System/currentTimeMillis))]
           (if (<= remaining 0)
             (g/should= expected-count (count notifications))
-            (if-let [notification (await-message notification?)]
-              (recur (conj notifications notification))
+            (if-let [notification (await-message notification-message?)]
+              (if (contains? listed-methods (:method notification))
+                (recur (conj notifications notification))
+                (recur notifications))
               (recur notifications))))))))
 
 (defn- last-notification-content []
