@@ -60,7 +60,33 @@ Feature: ACP Session Lifecycle
       | session/update | user_message_chunk          | Tell me a joke             |
       | session/update | agent_message_chunk         | Knock knock                |
 
-  Scenario: session/load replays the compaction summary in place of pre-compaction history
+  Scenario: session/load replays only the active transcript when compaction offset is set
+    Given the following sessions exist:
+      | name         |
+      | compact-head |
+    And session "compact-head" has transcript:
+      | type    | message.role | message.content |
+      | message | user         | old question    |
+      | message | assistant    | old answer      |
+      | message | user         | what next?      |
+      | message | assistant    | let's tackle Y. |
+    And compaction is spliced into session "compact-head" with:
+      | key               | value             |
+      | summary           | Compacted earlier |
+      | firstKeptIndex    | 2                 |
+      | compactedIndexes  | [0 1]             |
+      | tokensBefore      | 10                |
+    When the ACP client sends request 5:
+      | key              | value        |
+      | method           | session/load |
+      | params.sessionId | compact-head |
+    Then the ACP agent sends notifications:
+      | method         | params.update.sessionUpdate | params.update.content.text |
+      | session/update | agent_message_chunk         | Compacted earlier          |
+      | session/update | user_message_chunk          | what next?                 |
+      | session/update | agent_message_chunk         | let's tackle Y.            |
+
+  Scenario: session/load replays the compaction summary at the active head boundary
     Given the following sessions exist:
       | name        |
       | resume-test |
@@ -78,6 +104,30 @@ Feature: ACP Session Lifecycle
       | session/update | agent_message_chunk         | Earlier we discussed X.    |
       | session/update | user_message_chunk          | what next?                 |
       | session/update | agent_message_chunk         | let's tackle Y.            |
+
+  Scenario: session/load completes when a tool call result landed before the active offset
+    Given the following sessions exist:
+      | name        |
+      | resume-test |
+    And session "resume-test" has transcript:
+      | type       | id   | message.role | message.content | name | arguments     |
+      | message    |      | user         | check the logs  |      |               |
+      | toolCall   | tc-1 |              |                 | grep | {"q":"error"} |
+      | toolResult | tc-1 |              | 3 matches       |      |               |
+      | message    |      | assistant    | found 3 errors  |      |               |
+    And compaction is spliced into session "resume-test" with:
+      | key               | value        |
+      | summary           | Tool compact |
+      | firstKeptIndex    | 3            |
+      | compactedIndexes  | [0 1 2]      |
+      | tokensBefore      | 10           |
+    When the ACP client sends request 5:
+      | key              | value        |
+      | method           | session/load |
+      | params.sessionId | resume-test  |
+    Then the ACP agent sends notifications:
+      | method         | params.update.sessionUpdate | params.update.content.text |
+      | session/update | agent_message_chunk         | found 3 errors             |
 
   Scenario: session/load replays tool calls with their results
     Given the following sessions exist:
