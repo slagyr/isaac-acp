@@ -6,7 +6,7 @@
     [clojure.tools.cli :as tools-cli]
     [isaac.cli.api :as cli-api]
     [isaac.cli.registry :as registry]
-    [isaac.comm.acp.server :as server]
+    [isaac.comm.acp.server :as server :refer [attach-session-result!]]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
     [isaac.nexus :as nexus]
@@ -99,8 +99,10 @@
       (store/registered-store)
       (store/create (nexus/get :state-dir))))
 
-(defn- attach-session-handler [handlers session-key]
-  (assoc handlers "session/new" (fn [_ _] {:sessionId session-key})))
+(defn- attach-session-handler [handlers session-key output-writer]
+  (assoc handlers "session/new"
+         (fn [_params _message]
+           (attach-session-result! output-writer session-key))))
 
 (defn- run-loop [handlers]
   (let [reader (java.io.BufferedReader. *in*)]
@@ -161,7 +163,7 @@
                              model-alias           (assoc :model-override model-alias)
                              (:with-crew override) (assoc :crew-id (:with-crew override)))
               handlers     (cond-> (server/handlers server-opts')
-                             attach-key (attach-session-handler attach-key))]
+                             attach-key (attach-session-handler attach-key (:output-writer server-opts')))]
           (builtin/register-all!)
           (print-error! "isaac acp ready")
           (if (:verbose opts)

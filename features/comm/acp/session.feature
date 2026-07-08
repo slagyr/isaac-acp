@@ -127,6 +127,7 @@ Feature: ACP Session Lifecycle
       | params.sessionId | resume-test  |
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.content.text |
+      | session/update | agent_message_chunk         | Tool compact               |
       | session/update | agent_message_chunk         | found 3 errors             |
 
   Scenario: session/load replays tool calls with their results

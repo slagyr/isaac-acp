@@ -253,13 +253,17 @@
       (should= 0 exit)
       (should (str/includes? stderr "initialize"))))
 
-  (it "returns the attached session key for session/new when --session exists"
+  (it "replays transcript on stdout for attached session/new when --session exists"
     (let [state-dir    (str "/test/acp-attached-" (random-uuid))
           session-key  "user1"
           _            (session-helper/create-session! state-dir session-key)
-          request      (jrpc/request-line 1 "session/new" {})
+          _            (session-helper/append-message! state-dir session-key {:role "user" :content "hi"})
+          _            (session-helper/append-message! state-dir session-key {:role "assistant" :content "there"})
+          request      (jrpc/request-line 2 "session/new" {})
           {:keys [output exit]} (run-with-stdin request (assoc base-opts :state-dir state-dir :session session-key))]
       (should= 0 exit)
+      (should (str/includes? output "user_message_chunk"))
+      (should (str/includes? output "agent_message_chunk"))
       (should (str/includes? output "\"sessionId\":\"user1\""))))
 
   (it "fails when --session session does not exist"

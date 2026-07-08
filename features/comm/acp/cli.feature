@@ -69,7 +69,11 @@ Feature: ACP command
       {"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}
       """
     When isaac is run with "acp --session earlier-chat"
-    Then the stdout contains "\"sessionId\":\"earlier-chat\""
+    Then the stdout session/update notifications are:
+      | method         | params.update.sessionUpdate | params.update.content.text |
+      | session/update | user_message_chunk          | earlier                    |
+      | session/update | agent_message_chunk         | earlier reply              |
+    And the stdout contains "\"sessionId\":\"earlier-chat\""
     And the exit code is 0
 
   Scenario: --session fails if the session does not exist
