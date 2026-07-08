@@ -276,6 +276,16 @@
                                                   :id id))
                      true))
 
+(defn enqueue-notification-for-test! [message]
+  (enqueue-outgoing! message))
+
+(defn enqueue-spurious-session-update! []
+  (enqueue-outgoing! {:jsonrpc "2.0"
+                      :method  "session/update"
+                      :params  {:sessionId "spurious"
+                                :update    {:sessionUpdate "agent_message_chunk"
+                                            :content       {:type "text" :text "unexpected"}}}}))
+
 (defn acp-client-sends-notification [table]
   (send-client-line! (json/generate-string (assoc (table->message table)
                                                   :jsonrpc "2.0"))
@@ -295,13 +305,23 @@
 (defn acp-agent-sends-notifications [table]
   (let [expected-count (count (:rows table))
         notification?  #(and (contains? % :method) (not (contains? % :id)))
-        deadline       (+ (System/currentTimeMillis) await-timeout-ms)]
+        deadline       (+ (System/currentTimeMillis) await-timeout-ms)
+        finalize!      (fn [notifications]
+                         (g/should= expected-count (count notifications))
+                         (let [failures (:failures (match/match-entries table notifications))]
+                           (g/assoc! :last-acp-notifications notifications)
+                           (g/should= [] failures))
+                         (when-let [extra (await-message notification?)]
+                           (throw (ex-info "unexpected trailing session/update notification" {:notification extra}))))]
     (loop [notifications []]
-      (if (>= (count notifications) expected-count)
-        (let [candidate (vec (take expected-count notifications))
-              failures  (:failures (match/match-entries table candidate))]
-          (g/assoc! :last-acp-notifications candidate)
-          (g/should= [] failures))
+      (cond
+        (> (count notifications) expected-count)
+        (g/should= expected-count (count notifications))
+
+        (= (count notifications) expected-count)
+        (finalize! notifications)
+
+        :else
         (let [remaining (- deadline (System/currentTimeMillis))]
           (if (<= remaining 0)
             (g/should= expected-count (count notifications))
@@ -394,6 +414,8 @@
   "Dispatches a direct ACP session/prompt request in a background future.
    Use only in scenarios that must send a follow-up cancel or otherwise
    interact before the prompt turn completes.")
+
+(defwhen "a spurious session/update notification is enqueued" isaac.comm.acp.acp-steps/enqueue-spurious-session-update!)
 
 (defwhen "the ACP client sends notification:" isaac.comm.acp.acp-steps/acp-client-sends-notification)
 
