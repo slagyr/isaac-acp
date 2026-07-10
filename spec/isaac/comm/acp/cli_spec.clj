@@ -267,7 +267,7 @@
           _             (session-helper/create-session! state-dir session-key)
           _             (session-helper/append-message! state-dir session-key {:role "user" :content "earlier"})
           _             (session-helper/append-message! state-dir session-key {:role "assistant" :content "earlier reply"})
-          request       (jrpc/request-line 1 "session/new" {})
+          request       (jrpc/request-line 2 "session/new" {})
           {:keys [messages exit]} (run-with-stdin request (assoc base-opts :state-dir state-dir :session session-key))]
       (should= 0 exit)
       (should= ["session/update" "session/update" nil]

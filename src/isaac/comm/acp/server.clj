@@ -161,7 +161,7 @@
   (let [session-store (session-store)]
     (if-let [session (store/get-session session-store session-key)]
       (do
-        (replay-transcript! output-writer (:id session) (store/get-transcript session-store (:id session)))
+        (replay-transcript! output-writer (:id session) (store/active-transcript session-store (:id session)))
         {:sessionId (:id session)})
       (throw (invalid-params (str "session not found: " session-key))))))
 

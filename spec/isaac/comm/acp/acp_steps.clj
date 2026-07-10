@@ -276,6 +276,16 @@
                                                   :id id))
                      true))
 
+(defn enqueue-notification-for-test! [message]
+  (enqueue-outgoing! message))
+
+(defn enqueue-spurious-session-update! []
+  (enqueue-outgoing! {:jsonrpc "2.0"
+                      :method  "session/update"
+                      :params  {:sessionId "spurious"
+                                :update    {:sessionUpdate "agent_message_chunk"
+                                            :content       {:type "text" :text "unexpected"}}}}))
+
 (defn acp-client-sends-notification [table]
   (send-client-line! (json/generate-string (assoc (table->message table)
                                                   :jsonrpc "2.0"))
@@ -292,29 +302,55 @@
       (let [result (match/match-object table response)]
         (g/should= [] (:failures result))))))
 
+(defn- listed-methods-from-table [table]
+  (->> (:rows table)
+       (map #(get (zipmap (:headers table) %) "method"))
+       (remove str/blank?)
+       set))
+
+(defn- notification-message? [message]
+  (and (contains? message :method) (not (contains? message :id))))
+
+(defn- assert-no-trailing-listed-notifications! [listed-methods]
+  (let [q (outgoing-queue)]
+    (sync-output-messages! q)
+    (loop [skipped []]
+      (if-let [msg (.poll q)]
+        (if (and (notification-message? msg) (contains? listed-methods (:method msg)))
+          (do (doseq [m skipped] (.put q m))
+              (.put q msg)
+              (throw (ex-info "unexpected trailing notification for listed method"
+                              {:method (:method msg) :notification msg})))
+          (recur (conj skipped msg)))
+        (doseq [m skipped] (.put q m))))))
+
 (defn acp-agent-sends-notifications [table]
-  (let [expected-count  (count (:rows table))
-        notification?   #(and (contains? % :method) (not (contains? % :id)))
-        matching-window (fn [notifications]
-                          (let [notifications (vec notifications)]
-                            (some (fn [start]
-                                    (let [candidate (subvec notifications start (+ start expected-count))
-                                          result    (match/match-entries table candidate)]
-                                      (when (= [] (:failures result)) candidate)))
-                                  (range 0 (inc (- (count notifications) expected-count))))))
-        deadline        (+ (System/currentTimeMillis) await-timeout-ms)]
+  (let [expected-count (count (:rows table))
+        listed-methods (listed-methods-from-table table)
+        deadline       (+ (System/currentTimeMillis) await-timeout-ms)
+        finalize!      (fn [notifications]
+                         (g/should= expected-count (count notifications))
+                         (let [failures (:failures (match/match-entries table notifications))]
+                           (g/assoc! :last-acp-notifications notifications)
+                           (g/should= [] failures))
+                         (assert-no-trailing-listed-notifications! listed-methods))]
     (loop [notifications []]
-      (if-let [candidate (when (<= expected-count (count notifications))
-                           (matching-window notifications))]
-        (do
-          (g/assoc! :last-acp-notifications candidate)
-          (g/should= expected-count (count candidate)))
+      (cond
+        (> (count notifications) expected-count)
+        (g/should= expected-count (count notifications))
+
+        (= (count notifications) expected-count)
+        (finalize! notifications)
+
+        :else
         (let [remaining (- deadline (System/currentTimeMillis))]
           (if (<= remaining 0)
-            (g/should= [] (:failures (match/match-entries table (take expected-count notifications))))
-            (if-let [notification (await-message notification?)]
-              (recur (conj notifications notification))
-              (g/should= [] (:failures (match/match-entries table (take expected-count notifications)))))))))))
+            (g/should= expected-count (count notifications))
+            (if-let [notification (await-message notification-message?)]
+              (if (contains? listed-methods (:method notification))
+                (recur (conj notifications notification))
+                (recur notifications))
+              (recur notifications))))))))
 
 (defn- last-notification-content []
   (->> (or (g/get :last-acp-notifications) [])
@@ -330,6 +366,18 @@
 
 (defn notification-content-not-contains [text]
   (g/should-not (str/includes? (last-notification-content) text)))
+
+(defn stdout-session-update-notifications [table]
+  (let [expected-count (count (:rows table))
+        lines          (->> (str/split-lines (or (g/get :output) ""))
+                            (remove str/blank?)
+                            (mapv #(json/parse-string % true)))
+        notifications  (vec (filter #(and (= "session/update" (:method %))
+                                          (not (contains? % :id))) lines))
+        failures       (:failures (match/match-entries table notifications))]
+    (g/should= expected-count (count notifications))
+    (g/should= [] failures)))
+
 
 (defn isaac-home-contains-config [home doc-string]
   (let [abs-home    (absolute-path home)
@@ -390,6 +438,8 @@
    Use only in scenarios that must send a follow-up cancel or otherwise
    interact before the prompt turn completes.")
 
+(defwhen "a spurious session/update notification is enqueued" isaac.comm.acp.acp-steps/enqueue-spurious-session-update!)
+
 (defwhen "the ACP client sends notification:" isaac.comm.acp.acp-steps/acp-client-sends-notification)
 
 (defthen "the ACP agent sends response {id:int}:" isaac.comm.acp.acp-steps/acp-agent-sends-response)
@@ -405,6 +455,8 @@
    searched across the joined content.")
 
 (defthen "the notification content does not contain {text:string}" isaac.comm.acp.acp-steps/notification-content-not-contains)
+
+(defthen "the stdout session/update notifications are:" isaac.comm.acp.acp-steps/stdout-session-update-notifications)
 
 (defthen "the stdout has a JSON-RPC response for id {id:int}:" isaac.comm.acp.acp-steps/output-contains-json-rpc-response
   "Polls stdout until a JSON-RPC response matching the given id appears

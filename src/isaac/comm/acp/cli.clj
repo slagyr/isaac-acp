@@ -6,7 +6,7 @@
     [clojure.tools.cli :as tools-cli]
     [isaac.cli.api :as cli-api]
     [isaac.cli.registry :as registry]
-    [isaac.comm.acp.server :as server]
+    [isaac.comm.acp.server :as server :refer [attach-session-result!]]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
     [isaac.nexus :as nexus]

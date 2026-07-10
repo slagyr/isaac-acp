@@ -253,6 +253,41 @@
         (should= "wick trimmed" (get-in tool-replay [:params :update :rawOutput]))
         (should= "wick trimmed" (get-in tool-replay [:params :update :content 0 :content :text]))))
 
+    (it "replays only the active transcript when effective-history-offset is set"
+      (session-helper/create-session! test-dir "compact-head")
+      (session-helper/append-message! test-dir "compact-head" {:role "user" :content "old question"})
+      (session-helper/append-message! test-dir "compact-head" {:role "assistant" :content "old answer"})
+      (session-helper/append-message! test-dir "compact-head" {:role "user" :content "what next?"})
+      (session-helper/append-message! test-dir "compact-head" {:role "assistant" :content "let's tackle Y."})
+      (session-helper/update-session! test-dir "compact-head" {:effective-history-offset 3})
+      (let [writer        (StringWriter.)
+            _response     (sut/dispatch-line {:state-dir test-dir :output-writer writer}
+                                             (jrpc/request-line 5 "session/load" {:sessionId "compact-head"}))
+            notifications (parsed-output writer)]
+        (should= ["user_message_chunk" "agent_message_chunk"]
+                 (mapv #(get-in % [:params :update :sessionUpdate]) notifications))
+        (should= ["what next?" "let's tackle Y."]
+                 (mapv #(get-in % [:params :update :content :text]) notifications))))
+
+    (it "replays tool calls without results when the tool result is before the active offset"
+      (session-helper/create-session! test-dir "resume-offset-tools")
+      (session-helper/append-message! test-dir "resume-offset-tools" {:role "user" :content "check the logs"})
+      (session-helper/append-message! test-dir "resume-offset-tools" {:role "assistant"
+                                                                        :content [{:type      "toolCall"
+                                                                                   :id        "tc-1"
+                                                                                   :name      "grep"
+                                                                                   :arguments {:q "error"}}]})
+      (session-helper/append-message! test-dir "resume-offset-tools" {:role "toolResult" :toolCallId "tc-1" :content "3 matches"})
+      (session-helper/append-message! test-dir "resume-offset-tools" {:role "assistant" :content "found 3 errors"})
+      (session-helper/update-session! test-dir "resume-offset-tools" {:effective-history-offset 4})
+      (let [writer        (StringWriter.)
+            _response     (sut/dispatch-line {:state-dir test-dir :output-writer writer}
+                                             (jrpc/request-line 5 "session/load" {:sessionId "resume-offset-tools"}))
+            notifications (parsed-output writer)]
+        (should= ["agent_message_chunk"]
+                 (mapv #(get-in % [:params :update :sessionUpdate]) notifications))
+        (should= "found 3 errors" (get-in (first notifications) [:params :update :content :text]))))
+
     )
 
   (describe "session/prompt"
