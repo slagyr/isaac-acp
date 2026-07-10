@@ -308,49 +308,84 @@
        (remove str/blank?)
        set))
 
+(defn- listed-session-updates-from-table [table]
+  (when (some #(= "params.update.sessionUpdate" %) (:headers table))
+    (->> (:rows table)
+         (map #(get (zipmap (:headers table) %) "params.update.sessionUpdate"))
+         (remove str/blank?)
+         set)))
+
 (defn- notification-message? [message]
   (and (contains? message :method) (not (contains? message :id))))
 
-(defn- assert-no-trailing-listed-notifications! [listed-methods]
-  (let [q (outgoing-queue)]
-    (sync-output-messages! q)
-    (loop [skipped []]
-      (if-let [msg (.poll q)]
-        (if (and (notification-message? msg) (contains? listed-methods (:method msg)))
-          (do (doseq [m skipped] (.put q m))
-              (.put q msg)
-              (throw (ex-info "unexpected trailing notification for listed method"
-                              {:method (:method msg) :notification msg})))
-          (recur (conj skipped msg)))
-        (doseq [m skipped] (.put q m))))))
+(defn- expected-session-update-counts [table]
+  (when (some #(= "params.update.sessionUpdate" %) (:headers table))
+    (frequencies
+      (for [row (:rows table)
+            :let [su (get (zipmap (:headers table) row) "params.update.sessionUpdate")]
+            :when (not (str/blank? su))]
+        su))))
+
+(defn- strict-replay-notification-table? [expected-su-counts]
+  (and expected-su-counts
+       (or (contains? expected-su-counts "user_message_chunk")
+           (contains? expected-su-counts "agent_message_chunk"))))
+
+(defn- strict-trailing-listed-notification? [listed-methods expected-su-counts notification]
+  (and (notification-message? notification)
+       (contains? listed-methods (:method notification))
+       (or (nil? expected-su-counts)
+           (let [su (get-in notification [:params :update :sessionUpdate])]
+             (contains? expected-su-counts su)))))
+
+(defn- assert-no-trailing-listed-notifications! [listed-methods expected-su-counts matched-candidate]
+  (when (strict-replay-notification-table? expected-su-counts)
+    (let [matched-freq (frequencies
+                         (keep #(get-in % [:params :update :sessionUpdate]) matched-candidate))
+        q (outgoing-queue)]
+      (sync-output-messages! q)
+      (loop [skipped []]
+        (if-let [msg (.poll q)]
+          (if (strict-trailing-listed-notification? listed-methods expected-su-counts msg)
+            (let [su (get-in msg [:params :update :sessionUpdate])
+                  extra (inc (get matched-freq su 0))]
+              (when (> extra (get expected-su-counts su 0))
+                (doseq [m skipped] (.put q m))
+                (.put q msg)
+                (throw (ex-info "unexpected trailing notification for listed method"
+                                {:method (:method msg) :notification msg})))
+              (recur (conj skipped msg)))
+            (recur (conj skipped msg)))
+          (doseq [m skipped] (.put q m)))))))
 
 (defn acp-agent-sends-notifications [table]
-  (let [expected-count (count (:rows table))
-        listed-methods (listed-methods-from-table table)
-        deadline       (+ (System/currentTimeMillis) await-timeout-ms)
-        finalize!      (fn [notifications]
-                         (g/should= expected-count (count notifications))
-                         (let [failures (:failures (match/match-entries table notifications))]
-                           (g/assoc! :last-acp-notifications notifications)
-                           (g/should= [] failures))
-                         (assert-no-trailing-listed-notifications! listed-methods))]
+  (let [expected-count         (count (:rows table))
+        listed-methods         (listed-methods-from-table table)
+        expected-su-counts     (expected-session-update-counts table)
+        matching-window (fn [notifications]
+                          (let [notifications (vec notifications)]
+                            (some (fn [start]
+                                    (let [candidate (subvec notifications start (+ start expected-count))
+                                          result    (match/match-entries table candidate)]
+                                      (when (= [] (:failures result)) candidate)))
+                                  (range 0 (inc (- (count notifications) expected-count))))))
+        deadline        (+ (System/currentTimeMillis) await-timeout-ms)
+        finalize!       (fn [candidate]
+                          (g/assoc! :last-acp-notifications candidate)
+                          (g/should= expected-count (count candidate))
+                          (assert-no-trailing-listed-notifications! listed-methods
+                                                                  expected-su-counts
+                                                                  candidate))]
     (loop [notifications []]
-      (cond
-        (> (count notifications) expected-count)
-        (g/should= expected-count (count notifications))
-
-        (= (count notifications) expected-count)
-        (finalize! notifications)
-
-        :else
+      (if-let [candidate (when (<= expected-count (count notifications))
+                           (matching-window notifications))]
+        (finalize! candidate)
         (let [remaining (- deadline (System/currentTimeMillis))]
           (if (<= remaining 0)
-            (g/should= expected-count (count notifications))
+            (g/should= [] (:failures (match/match-entries table (take expected-count notifications))))
             (if-let [notification (await-message notification-message?)]
-              (if (contains? listed-methods (:method notification))
-                (recur (conj notifications notification))
-                (recur notifications))
-              (recur notifications))))))))
+              (recur (conj notifications notification))
+              (g/should= [] (:failures (match/match-entries table (take expected-count notifications)))))))))))
 
 (defn- last-notification-content []
   (->> (or (g/get :last-acp-notifications) [])
