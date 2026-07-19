@@ -1,13 +1,46 @@
-{:deps {io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                        :git/sha "44e824c6eded90301ed1aba8ed3948c66725ee43"
-                                                        :deps/root "spec-support"}}
+{:paths ["src" "spec"]
+
+ ;; Native babashka runners via isaac-foundation-test-support (isaac-x5ru / isaac-7ivl).
+ ;; test-support SHA must be >= 43cf46e (bb.test-tasks under spec-support/src/bb/).
+ ;; Product foundation pin stays aligned with deps.edn so native/JVM feature parity holds.
+ ;; :spec/:features-equivalent classpath inlined here so specs resolve natively.
+ ;;
+ ;; Step globs are explicit (not isaac.**-steps) — matches deps.edn :features main-opts.
+ ;; When a ../isaac-agent checkout exists, jvm-* tasks still honor :dev-local via
+ ;; alias-prefix (set ISAAC_GIT=1 to force pinned git shas). Native path always
+ ;; uses the pins below.
+ :deps {com.cleancoders.c3kit/apron {:mvn/version "3.0.0"}
+        cheshire/cheshire {:mvn/version "5.13.0"}
+        org.clojure/tools.cli {:mvn/version "1.1.230"}
+        speclj/speclj {:mvn/version "3.13.0"}
+        babashka/process {:mvn/version "0.5.22"}
+        io.github.slagyr/gherclj {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
+        io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
+                                           :git/sha "d4a7bf10a039e6b4f229defc38333ee2a5d7cc32"}
+        io.github.slagyr/isaac-foundation-spec {:git/url "https://github.com/slagyr/isaac-foundation.git"
+                                                :git/sha "d4a7bf10a039e6b4f229defc38333ee2a5d7cc32"
+                                                :deps/root "spec"}
+        io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
+                                                        :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
+                                                        :deps/root "spec-support"}
+        io.github.slagyr/isaac-agent {:git/url "https://github.com/slagyr/isaac-agent.git"
+                                      :git/sha "44b55e341ac8ab9626400188836c80ee2b41541e"}
+        io.github.slagyr/isaac-agent-spec {:git/url "https://github.com/slagyr/isaac-agent.git"
+                                           :git/sha "44b55e341ac8ab9626400188836c80ee2b41541e"
+                                           :deps/root "spec"}
+        io.github.slagyr/isaac-server {:git/url "https://github.com/slagyr/isaac-server.git"
+                                       :git/sha "eb51cc48b8964dabb678086ac36051a86d94c03a"}
+        io.github.slagyr/isaac-server-test-support {:git/url "https://github.com/slagyr/isaac-server.git"
+                                                    :git/sha "eb51cc48b8964dabb678086ac36051a86d94c03a"
+                                                    :deps/root "spec-support"}
+        marigold.bridge/marigold.bridge {:git/url "https://github.com/slagyr/isaac-foundation.git"
+                                         :git/sha "d4a7bf10a039e6b4f229defc38333ee2a5d7cc32"
+                                         :deps/root "modules/marigold.bridge"}
+        marigold.longwave/marigold.longwave {:git/url "https://github.com/slagyr/isaac-foundation.git"
+                                             :git/sha "d4a7bf10a039e6b4f229defc38333ee2a5d7cc32"
+                                             :deps/root "modules/marigold.longwave"}}
 
  :tasks
- ;; Tests run via JVM clojure aliases (deps.edn :spec / :features), matching
- ;; the sibling consumers (cron/hail). When a ../isaac-agent checkout exists,
- ;; the :dev-local alias overrides the pinned agent/server/foundation deps with
- ;; local siblings so cross-repo edits land without pushing. Set ISAAC_GIT=1 to
- ;; force the pinned git shas even when siblings exist.
  {:init (def ^:private alias-prefix
           (if (and (not (System/getenv "ISAAC_GIT"))
                    (babashka.fs/exists? "../isaac-agent"))
@@ -18,17 +51,77 @@
                       :requires ([isaac.foundation.config-bypass-lint :as lint])
                       :task (apply lint/lint! (or (seq *command-line-args*) ["src"]))}
 
-  spec     {:doc  "Run ACP unit specs"
-            :task (apply shell "clojure" (str alias-prefix ":spec") *command-line-args*)}
+  spec {:doc  "Run speclj specs natively in babashka (pass file/dir to narrow)"
+        :requires ([bb.test-tasks :as tests])
+        :task (apply tests/run-spec! *command-line-args*)}
 
-  features {:doc  "Run ACP features (excludes @slow and @wip)"
-            :task (do (babashka.fs/delete-tree "target")
-                      (apply shell "clojure" (str alias-prefix ":features") *command-line-args*))}
+  jvm-spec {:doc  "Run speclj via clojure -M:spec (JVM fallback; honors :dev-local)"
+            :requires ([bb.test-tasks :as tests])
+            :task (binding [tests/*jvm-spec-cmd* ["clojure" (str alias-prefix ":spec")]]
+                    (apply tests/run-jvm-spec! *command-line-args*))}
 
-  ci       {:doc  "Run all specs and features"
-            :task (do (run 'config-bypass-lint)
-                      (shell "bb" "spec")
-                      (shell "bb" "features"))}
+  ;; Explicit step namespaces match deps.edn :features main-opts (not the
+  ;; default isaac.**-steps glob). 180s budget — JVM shell was ~83s wall;
+  ;; shared 60s timeout is too short (isaac-7ivl).
+  features {:doc  "Run gherclj feature specs natively (excludes @slow and @wip)"
+            :requires ([babashka.fs :as fs]
+                       [bb.test-tasks :as tests]
+                       [gherclj.main :as gherclj])
+            :task (let [args *command-line-args*
+                        step-globs ["isaac.foundation.fs-steps"
+                                    "isaac.foundation.root-steps"
+                                    "isaac.foundation.harness-config-steps"
+                                    "isaac.foundation.cli-steps"
+                                    "isaac.session.session-steps"
+                                    "isaac.comm.acp.acp-steps"]
+                        timeout-token (keyword "timeout")
+                        run! (fn []
+                               (fs/delete-tree "target")
+                               (println "Cleaned target/")
+                               (apply gherclj/-main
+                                      (concat ["-f" "features"]
+                                              (mapcat (fn [g] ["-s" g]) step-globs)
+                                              ["-t" "~slow" "-t" "~wip"]
+                                              args)))
+                        fut  (future (run!))
+                        res  (deref fut 180000 timeout-token)]
+                    (when (= res timeout-token)
+                      (println "features timed out after 180s")
+                      (System/exit 124))
+                    res)}
 
-  clean    {:doc  "Remove the target/ build dir (gherclj-generated specs, etc.)"
-            :task (babashka.fs/delete-tree "target")}}}
+  jvm-features {:doc  "Run gherclj via clojure -M:features (JVM fallback; honors :dev-local)"
+                :requires ([babashka.fs :as fs]
+                           [babashka.process :as process])
+                :task (let [args *command-line-args*
+                            timeout-token (keyword "timeout")
+                            cmd (into ["clojure" (str alias-prefix ":features")] args)
+                            run! (fn []
+                                   (fs/delete-tree "target")
+                                   (println "Cleaned target/")
+                                   (apply process/shell cmd))
+                            fut (future (run!))
+                            res (deref fut 180000 timeout-token)]
+                        (when (= res timeout-token)
+                          (println "jvm-features timed out after 180s")
+                          (System/exit 124))
+                        (when (pos? (:exit res))
+                          (System/exit (:exit res)))
+                        res)}
+
+  ci {:doc  "Run unit specs + acceptance features (native bb path)"
+      :requires ([babashka.process :as process])
+      :task (do (run 'config-bypass-lint)
+                (let [{:keys [exit]} (if (seq *command-line-args*)
+                                       (apply process/shell "bb" "spec" *command-line-args*)
+                                       (process/shell "bb" "spec"))]
+                  (when (pos? exit) (System/exit exit)))
+                (let [{:keys [exit]} (process/shell "bb" "features")]
+                  (when (pos? exit) (System/exit exit))))}
+
+  verify {:doc  "Run the full verification gate (native bb path)"
+          :task (run 'ci)}
+
+  clean {:doc  "Remove the target/ build dir (gherclj-generated specs, etc.)"
+         :task (babashka.fs/delete-tree "target")}}
+}
