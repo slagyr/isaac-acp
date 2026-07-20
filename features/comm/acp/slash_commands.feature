@@ -19,7 +19,9 @@ Feature: ACP Slash Commands
       | method         | params.update.sessionUpdate | params.update.availableCommands[0].name | params.update.availableCommands[1].name | params.update.availableCommands[2].name |
       | session/update | available_commands_update   | status                                  | model                                   | crew                                    |
 
-  Scenario: /status returns formatted markdown via ACP notification
+  Scenario: /status returns structured data via chat/status notification
+    # Server emits format-neutral status data (chat/status), not markdown
+    # session/update chunks — CLI and MD-capable clients render themselves.
     When the ACP client sends request 2:
       | key                   | value          |
       | method                | session/prompt |
@@ -30,18 +32,8 @@ Feature: ACP Slash Commands
       | key               | value    |
       | result.stopReason | end_turn |
     And the ACP agent sends notifications:
-      | method         | params.update.sessionUpdate |
-      | session/update | agent_message_chunk         |
-    And the notification content matches:
-      | pattern                               |
-      | Session Status                        |
-      | Crew .* main                          |
-      | ─+                                    |
-      | Model .* echo \(grover\)              |
-      | Session .* cmd-test                   |
-      | Soul .*                                 |
-      | Tools .* \d+                          |
-    And the notification content does not contain "SOUL.md"
+      | method      | params.crew | params.model | params.provider | params.session-key |
+      | chat/status | main        | echo         | grover          | cmd-test           |
 
   Scenario: slash command is not added to the transcript
     When the ACP client sends request 2:
