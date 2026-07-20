@@ -65,7 +65,10 @@
                            "-s" "isaac.foundation.root-steps"
                            "-s" "isaac.foundation.harness-config-steps"
                            "-s" "isaac.foundation.cli-steps"
+                           "-s" "isaac.foundation.log-steps"
                            "-s" "isaac.session.session-steps"
+                           "-s" "isaac.tool.tools-steps"
+                           "-s" "isaac.llm.providers-steps"
                            "-s" "isaac.comm.acp.acp-steps"
                            "-t" "~slow"
                            "-t" "~wip"]}}}

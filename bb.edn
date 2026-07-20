@@ -72,7 +72,10 @@
                                     "isaac.foundation.root-steps"
                                     "isaac.foundation.harness-config-steps"
                                     "isaac.foundation.cli-steps"
+                                    "isaac.foundation.log-steps"
                                     "isaac.session.session-steps"
+                                    "isaac.tool.tools-steps"
+                                    "isaac.llm.providers-steps"
                                     "isaac.comm.acp.acp-steps"]
                         timeout-token (keyword "timeout")
                         run! (fn []

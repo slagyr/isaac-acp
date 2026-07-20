@@ -445,6 +445,22 @@
     (g/assoc! :root root)
     (g/update! :main-extra-opts #(merge (or % {}) {:home abs-home}))))
 
+(defn workspace-has-soul-md
+  "Writes SOUL.md under the crew workspace dir resolved by
+   isaac.config.loader/resolve-workspace (prefers <root>/crew/<id>/)."
+  [crew-id home doc-string]
+  (let [root    (or (g/get :root) (isaac-home-root home))
+        ws-dir  (str root "/crew/" crew-id)
+        soul    (str ws-dir "/SOUL.md")
+        content (str/trim doc-string)]
+    (if-let [mem-fs (g/get :mem-fs)]
+      (nexus/-with-nested-nexus {:fs mem-fs}
+        (fs/mkdirs mem-fs ws-dir)
+        (fs/spit mem-fs soul content))
+      (do
+        (.mkdirs (io/file ws-dir))
+        (spit soul content)))))
+
 (defn output-contains-json-rpc-response [id table]
   (let [response (await-output-response id)]
     (g/should-not-be-nil response)
@@ -517,5 +533,9 @@
   "Compatibility shim for ACP features that still refer to an Isaac home
    rather than a root. Ensures <home>/.isaac exists without config and
    passes :home through main/*extra-opts* for the CLI under test.")
+
+(defgiven "workspace {crew:string} in {home:string} has SOUL.md:" isaac.comm.acp.acp-steps/workspace-has-soul-md
+  "Writes SOUL.md into <root>/crew/<crew>/ so resolve-workspace picks it up
+   when the crew config has no inline :soul.")
 
 ;; endregion ^^^^^ Step routing ^^^^^
