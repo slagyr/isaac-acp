@@ -188,11 +188,10 @@
                                    result (acp-server/dispatch-line
                                             (cond-> {:state-dir        state-dir
                                                      :provider-configs (g/get :provider-configs)
-                                                     :output-writer    live-writer}
+                                                     :output-writer    live-writer
+                                                     :cfg              loaded}
                                               agents (assoc :crew-members agents)
-                                              models (assoc :models models)
-                                              (and (nil? agents) (nil? models))
-                                              (assoc :cfg loaded))
+                                              models (assoc :models models))
                                             line)]
                                (enqueue-output-lines! live-writer)
                                (record-dispatch-result! result))

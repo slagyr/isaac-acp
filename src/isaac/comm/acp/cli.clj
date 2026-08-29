@@ -11,6 +11,7 @@
     [isaac.config.resolve :as config-resolve]
     [isaac.nexus :as nexus]
     [isaac.util.jsonrpc :as jrpc]
+    [isaac.episodes.lifecycle :as lifecycle]
     [isaac.session.frequencies :as frequencies]
     [isaac.session.frequencies-cli :as frequencies-cli]
     [isaac.session.store.spi :as store]
@@ -156,10 +157,17 @@
         :else
         ;; Attach session/new to the resolved key when one exists; when the
         ;; policy resolves to create, let the server open a fresh session.
-        (let [attach-key   (when-not (:create? target) (:session-key target))
+        ;; Episode crews never attach to a chronicle — --crew with no explicit
+        ;; session defaults to a fresh thread (replay nothing; recall fills in).
+        (let [cfg          (or (config/snapshot "ACP CLI episode attach") {})
+              crew-id      (or (:with-crew override) (:crew opts) (get-in cfg [:defaults :crew]) "main")
+              episode?     (lifecycle/episodes-crew? cfg crew-id)
+              attach-key   (when (and (not episode?) (not (:create? target)))
+                             (:session-key target))
               server-opts' (cond-> server-opts
                              model-alias           (assoc :model-override model-alias)
-                             (:with-crew override) (assoc :crew-id (:with-crew override)))
+                             (or (:with-crew override) (and episode? (:crew opts)))
+                             (assoc :crew-id crew-id))
               handlers     (cond-> (server/handlers server-opts')
                              attach-key (attach-session-handler (:output-writer server-opts') attach-key))]
           (builtin/register-all!)

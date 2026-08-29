@@ -1,4 +1,3 @@
-@wip
 Feature: ACP surface dispatches through the bridge — episode crews get episodes
   Every surface enters the turn engine at ONE seam: bridge dispatch, where the
   episode router, turnstiles, observers and finalization live (isaac-6yg0
@@ -20,10 +19,11 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | path     | value  |
       | model    | gist   |
       | provider | grover |
-    And config file "isaac.edn" containing:
-      """
-      {:episodes {:gist-model :gist}}
-      """
+    And the isaac EDN file "config/isaac.edn" exists with:
+      | path                | value     |
+      | defaults.crew       | cordelia  |
+      | defaults.model      | echo      |
+      | episodes.gist-model | gist      |
     And the current time is "2026-03-01T10:00:00Z"
 
   Scenario: session/prompt on an episodes crew opens an episode with the ACP session as thread
@@ -89,6 +89,9 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | path  | value             |
       | model | echo              |
       | soul  | You are a pirate. |
+    And the isaac EDN file "config/isaac.edn" exists with:
+      | path          | value |
+      | defaults.crew | ketch |
     And the ACP client has initialized
     And the following model responses are queued:
       | type | content | model |

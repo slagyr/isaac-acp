@@ -85,13 +85,13 @@
 
     (it "requires a session id"
       (should-throw clojure.lang.ExceptionInfo
-                    (#'sut/session-prompt-handler (StringWriter.) nil nil nil nil test-dir nil
+                    (#'sut/session-prompt-handler (StringWriter.) nil nil nil nil test-dir nil nil
                                                   {:prompt [{:type "text" :text "Hi"}]}
                                                   nil)))
 
     (it "requires a text prompt"
       (should-throw clojure.lang.ExceptionInfo
-                    (#'sut/session-prompt-handler (StringWriter.) nil nil nil nil test-dir nil
+                    (#'sut/session-prompt-handler (StringWriter.) nil nil nil nil test-dir nil nil
                                                   {:sessionId "agent:main:acp:direct:user1"
                                                    :prompt    [{:type "image" :url "https://example.com/cat.png"}]}
                                                   nil)))
@@ -119,7 +119,7 @@
                                                (reset! captured-request request)
                                                {:stopReason "end_turn"})]
           (should= {:stopReason "end_turn"}
-                   (#'sut/session-prompt-handler (StringWriter.) {"main" {:soul "You are Isaac."}} {} nil nil test-dir nil
+                   (#'sut/session-prompt-handler (StringWriter.) {"main" {:soul "You are Isaac."}} {} nil nil test-dir nil nil
                                                   {:sessionId "agent:main:acp:direct:user1"
                                                    :prompt    [{:type "text" :text "Hello"}]}
                                                   nil))
@@ -143,7 +143,7 @@
         (with-redefs [sut/run-prompt (fn [_ _ _ request]
                                        (reset! captured-config (:config request))
                                        {:stopReason "end_turn"})]
-          (#'sut/session-prompt-handler (StringWriter.) nil nil nil stale-cfg test-dir nil
+          (#'sut/session-prompt-handler (StringWriter.) nil nil nil stale-cfg test-dir nil nil
                                         {:sessionId "agent:main:acp:direct:user1"
                                          :prompt    [{:type "text" :text "Hello"}]}
                                         nil)

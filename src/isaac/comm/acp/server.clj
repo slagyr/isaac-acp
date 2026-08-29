@@ -6,17 +6,21 @@
     [isaac.comm.acp :as acp-comm]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
-    [isaac.util.jsonrpc :as jrpc]
-    [isaac.util.jsonrpc :as dispatch]
+    [isaac.config.root :as root]
     [isaac.drive.turn :as single-turn]
+    [isaac.episodes.lifecycle :as lifecycle]
+    [isaac.episodes.store :as episode-store]
+    [isaac.fs :as fs]
     [isaac.llm.api.protocol :as llm-api]
     [isaac.logger :as log]
-    [isaac.config.root :as root]
+    [isaac.nexus :as nexus]
     [isaac.server.routes]
     [isaac.session.store.spi :as store]
     [isaac.session.transcript :as message-content]
     [isaac.slash.registry :as slash-registry]
-    [isaac.system :as system]))
+    [isaac.system :as system]
+    [isaac.util.jsonrpc :as dispatch]
+    [isaac.util.jsonrpc :as jrpc]))
 
 (defn- available-commands []
   ;; slash-registry/all-commands (2-arg) merges built-ins + module-declared
@@ -57,19 +61,31 @@
                    :error   {:code    jrpc/INVALID_PARAMS
                              :message (str "session already exists: " session-id)}}})
 
-(defn- session-new-handler [crew-id params message]
-  (let [session-store (session-store)]
+(defn- ambient-cfg []
+  (or (config/snapshot "ACP ambient config") {}))
+
+(defn- episode-thread-id [params]
+  (or (:name params)
+      (str "acp-" (.toString (java.util.UUID/randomUUID)))))
+
+(defn- session-new-handler [crew-id cfg params message]
+  (let [session-store (session-store)
+        cfg           (or cfg (ambient-cfg) {})]
     (if-let [existing-session (when-let [session-name (:name params)]
                                 (store/get-session session-store session-name))]
       (duplicate-session-response message (:id existing-session))
-      (let [session (with-startup-cwd #((requiring-resolve 'isaac.session.context/create-with-resolved-behavior!)
-                                        (:name params) {:crew          crew-id
-                                                       :channel       "acp"
-                                                       :chatType      "direct"
-                                                       :origin        {:kind :acp}
-                                                       :session-store session-store}))]
-        {:notifications [(acp-comm/available-commands-update (:id session) (available-commands))]
-         :result        {:sessionId (:id session)}}))))
+      (if (lifecycle/episodes-crew? cfg crew-id)
+        (let [thread (episode-thread-id params)]
+          {:notifications [(acp-comm/available-commands-update thread (available-commands))]
+           :result        {:sessionId thread}})
+        (let [session (with-startup-cwd #((requiring-resolve 'isaac.session.context/create-with-resolved-behavior!)
+                                          (:name params) {:crew          crew-id
+                                                          :channel       "acp"
+                                                          :chatType      "direct"
+                                                          :origin        {:kind :acp}
+                                                          :session-store session-store}))]
+          {:notifications [(acp-comm/available-commands-update (:id session) (available-commands))]
+           :result        {:sessionId (:id session)}})))))
 
 (defn- initialize-result [model provider]
   {:protocolVersion   1
@@ -170,12 +186,31 @@
       (doseq [entry transcript]
         (replay-transcript-entry! output-writer session-id tool-results entry)))))
 
+(defn- replay-open-episode! [output-writer session-key crew-id]
+  (let [cfg     (ambient-cfg)
+        fs*     (or (nexus/get :fs) (fs/instance))
+        root    (or (:root cfg) (nexus/get :root) (root/current-root))
+        open    (episode-store/find-open-on-thread fs* root crew-id session-key)
+        ss      (session-store)]
+    (when open
+      (replay-transcript! output-writer session-key (store/active-transcript ss (:id open))))
+    {:sessionId session-key}))
+
 (defn attach-session-result! [output-writer session-key]
-  (let [session-store (session-store)]
-    (if-let [session (store/get-session session-store session-key)]
+  (let [session-store (session-store)
+        cfg           (ambient-cfg)
+        session       (store/get-session session-store session-key)
+        crew-id       (or (:crew session) (get-in cfg [:defaults :crew]) "main")]
+    (cond
+      (lifecycle/episodes-crew? cfg crew-id)
+      (replay-open-episode! output-writer session-key crew-id)
+
+      session
       (do
         (replay-transcript! output-writer (:id session) (store/active-transcript session-store (:id session)))
         {:sessionId (:id session)})
+
+      :else
       (throw (invalid-params (str "session not found: " session-key))))))
 
 (defn- session-load-handler [output-writer _crew-id params _message]
@@ -207,9 +242,10 @@
         payload  (assoc ctx :comm channel
                              :session-key session-id
                              :input text
+                             :origin {:kind :acp}
                              :state-dir (or (:state-dir ctx) (root/current-root)))
         result   (try
-                   (with-startup-cwd #(bridge/dispatch! (charge/build payload)))
+                   (with-startup-cwd #(bridge/dispatch! payload))
                   (catch Exception e
                     (log/ex :acp/turn-error e :session session-id)
                     {:error :exception :message (or (.getMessage e) "Unexpected error")}))]
@@ -230,13 +266,15 @@
       :else
       {:stopReason "end_turn"})))
 
-(defn- session-prompt-handler [output-writer crew-members models provider-configs cfg home model-override params _message]
+(defn- session-prompt-handler [output-writer crew-members models provider-configs cfg home model-override crew-id params _message]
   (let [session-id    (get params :sessionId)
         text          (prompt->text (get params :prompt))
         session-entry (when session-id (store/get-session (session-store) session-id))
         cfg*          (or (config/snapshot "ACP session/prompt config base") cfg {})
         crew-members  (resolve-crew-members crew-members cfg*)
-        effective-cfg (effective-cfg cfg* crew-members (or models {}) (or provider-configs {}))]
+        effective-cfg (effective-cfg cfg* crew-members (or models {}) (or provider-configs {}))
+        crew-id       (or (:crew session-entry) (:agent session-entry) crew-id
+                          (get-in effective-cfg [:defaults :crew]) "main")]
     (when (nil? session-id)
       (throw (invalid-params "sessionId is required")))
     (when (nil? text)
@@ -244,15 +282,18 @@
     (run-prompt output-writer session-id text {:config         effective-cfg
                                                :home           home
                                                :model-override model-override
-                                               :crew           (or (:crew session-entry) (:agent session-entry))})))
+                                               :origin         {:kind :acp}
+                                               :crew           crew-id})))
 
 (defn handlers
-  [{:keys [crew-id crew-members models provider-configs cfg home output-writer model-override] :or {crew-id "main"}}]
-  (let [opts {:crew-members crew-members :models models :provider-configs provider-configs :cfg cfg :home home :crew-id crew-id :model-override model-override}]
+  [{:keys [crew-id crew-members models provider-configs cfg home output-writer model-override]}]
+  (let [cfg     (or cfg (ambient-cfg) {})
+        crew-id (or crew-id (get-in cfg [:defaults :crew]) "main")
+        opts {:crew-members crew-members :models models :provider-configs provider-configs :cfg cfg :home home :crew-id crew-id :model-override model-override}]
     {"initialize"      (partial initialize-handler opts)
-     "session/new"     (partial session-new-handler crew-id)
+     "session/new"     (partial session-new-handler crew-id cfg)
      "session/load"    (partial session-load-handler output-writer crew-id)
-     "session/prompt"  (partial session-prompt-handler output-writer crew-members models provider-configs cfg home model-override)
+     "session/prompt"  (partial session-prompt-handler output-writer crew-members models provider-configs cfg home model-override crew-id)
      "session/cancel"  session-cancel-handler}))
 
 (defn dispatch-line
