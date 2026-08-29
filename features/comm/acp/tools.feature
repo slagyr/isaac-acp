@@ -14,7 +14,7 @@ Feature: ACP Tool Calls
   Scenario: Tool calls emit state updates
     Given the following model responses are queued:
       | tool_call | arguments              |
-      | exec      | {"command": "echo hi"} |
+      | exec__run | {"command": "echo hi"} |
     When the ACP client sends request 40:
       | key                   | value          |
       | method                | session/prompt |
@@ -29,7 +29,7 @@ Feature: ACP Tool Calls
   Scenario: Tool notifications include sessionId
     Given the following model responses are queued:
       | tool_call | arguments              |
-      | exec      | {"command": "echo hi"} |
+      | exec__run | {"command": "echo hi"} |
     When the ACP client sends request 41:
       | key                   | value          |
       | method                | session/prompt |
@@ -44,7 +44,7 @@ Feature: ACP Tool Calls
   Scenario: Tool call notifications include title, kind, and rawInput per ACP spec
     Given the following model responses are queued:
       | tool_call | arguments              |
-      | exec      | {"command": "echo hi"} |
+      | exec__run | {"command": "echo hi"} |
     When the ACP client sends request 42:
       | key                   | value          |
       | method                | session/prompt |
@@ -53,13 +53,13 @@ Feature: ACP Tool Calls
       | params.prompt[0].text | Run echo       |
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.title  | params.update.kind | params.update.rawInput.command |
-      | session/update | tool_call                   | exec: echo hi        | execute            | echo hi                        |
-      | session/update | tool_call_update            | exec: echo hi        | execute            | echo hi                        |
+      | session/update | tool_call                   | exec__run: echo hi   | other              | echo hi                        |
+      | session/update | tool_call_update            | exec__run: echo hi   | other              | echo hi                        |
 
   Scenario: Tool result includes toolCallId, rawOutput, and expandable content
     Given the following model responses are queued:
       | tool_call | arguments              |
-      | exec      | {"command": "echo hi"} |
+      | exec__run | {"command": "echo hi"} |
     When the ACP client sends request 43:
       | key                   | value          |
       | method                | session/prompt |
@@ -74,7 +74,7 @@ Feature: ACP Tool Calls
   Scenario: tool result updates repeat title, kind, and rawInput for thin ACP clients
     Given the following model responses are queued:
       | tool_call | arguments                        |
-      | exec      | {"command": "echo tide-signal"} |
+      | exec__run | {"command": "echo tide-signal"} |
     When the ACP client sends request 44:
       | key                   | value          |
       | method                | session/prompt |
@@ -83,5 +83,5 @@ Feature: ACP Tool Calls
       | params.prompt[0].text | Ring the bell  |
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.title     | params.update.kind | params.update.rawInput.command |
-      | session/update | tool_call                   | exec: echo tide-signal  | execute            | echo tide-signal               |
-      | session/update | tool_call_update            | exec: echo tide-signal  | execute            | echo tide-signal               |
+      | session/update | tool_call                   | exec__run: echo tide-signal | other              | echo tide-signal               |
+      | session/update | tool_call_update            | exec__run: echo tide-signal | other              | echo tide-signal               |

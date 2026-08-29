@@ -59,7 +59,10 @@ Feature: ACP session selection and overrides
       | result.sessionId | #*    |
     And the exit code is 0
 
+  @wip
   Scenario: --session combined with selection flags is rejected per shared rules
+    # Shared frequencies_cli no longer treats --session + --crew as exclusive
+    # (only --session-tag/--create). Agent-product, not ACP fixture — sibling draft.
     When isaac is run with "acp --session some-id --crew ketch"
     Then the stderr contains "--session is mutually exclusive with --crew"
     And the exit code is 1

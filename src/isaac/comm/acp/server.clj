@@ -84,12 +84,25 @@
       (some-> cfg config/normalize-config :crew)
       {}))
 
+(defn- providers-from-models [models]
+  (into {}
+        (keep (fn [[_ model]]
+                (when-let [provider (:provider model)]
+                  (let [id (if (keyword? provider) (name provider) (str provider))]
+                    [id {:api id :auth "none"}]))))
+        (or models {})))
+
 (defn- effective-cfg [cfg crew-members models provider-configs]
-  (config/normalize-config
-    (cond-> (or cfg {})
-      (seq crew-members)     (assoc :crew crew-members)
-      (seq models)           (assoc :models models)
-      (seq provider-configs) (update :providers merge provider-configs))))
+  (let [cfg* (cond-> (or cfg {})
+               (seq crew-members)     (assoc :crew crew-members)
+               (seq models)           (assoc :models models)
+               (seq provider-configs) (update :providers merge provider-configs))
+        cfg* (if (seq (:providers cfg*))
+               cfg*
+               (let [inferred (providers-from-models (or models (:models cfg*)))]
+                 (cond-> cfg*
+                   (seq inferred) (assoc :providers inferred))))]
+    (config/normalize-config cfg*)))
 
 (defn- initialize-handler [opts _params _message]
   (let [{:keys [crew-id crew-members models provider-configs cfg home model-override] :or {crew-id "main"}} opts

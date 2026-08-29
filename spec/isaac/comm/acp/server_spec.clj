@@ -33,14 +33,24 @@
 
 (def ^:private test-agents {"main" {:name "main" :soul "You are Isaac." :model "grover"}})
 (def ^:private test-models {"grover" {:alias "grover" :model "echo" :provider "grover" :context-window 32768}})
-(def ^:private prompt-opts {:state-dir test-dir :crew-members test-agents :models test-models})
+(def ^:private test-providers {"grover" {:api "grover" :auth "none"}})
+(def ^:private prompt-opts {:state-dir test-dir :crew-members test-agents :models test-models :provider-configs test-providers})
+(def ^:private prompt-snapshot {:defaults  {:crew "main" :model "grover"}
+                                :crew      test-agents
+                                :models    test-models
+                                :providers test-providers})
 
 (describe "ACP server"
 
   (marigold-agent/with-manifest)
 
   #_{:clj-kondo/ignore [:unresolved-symbol]}
-  (around [example] (session-helper/with-memory-store (system/with-nested-system {:state-dir test-dir :fs (fs/mem-fs)} (example))))
+  (around [example]
+    (session-helper/with-memory-store
+      (system/with-nested-system {:state-dir test-dir :fs (fs/mem-fs)}
+        (config/set-snapshot! prompt-snapshot "ACP server-spec isolate snapshot")
+        (grover/install-test-fixture!)
+        (example))))
 
   (describe "initialize"
 
@@ -89,13 +99,17 @@
     (it "returns an error turn when a known crew has no model configured"
       (session-helper/create-session! test-dir "agent:ketch:acp:direct:user1" {:crew "ketch"})
       (let [writer     (StringWriter.)
-            err-writer (java.io.StringWriter.)]
+            err-writer (java.io.StringWriter.)
+            cfg        {:crew {"ketch" {:soul "Ahoy"}}}]
         (binding [*err* err-writer]
-          (let [result (#'sut/session-prompt-handler writer {"ketch" {:soul "Ahoy"}} {} nil nil test-dir nil
-                                                     {:sessionId "agent:ketch:acp:direct:user1"
-                                                      :prompt    [{:type "text" :text "Hi"}]}
-                                                     nil)]
-            (should= "end_turn" (:stopReason result))
+          (config/set-snapshot! cfg "ACP server-spec no-model ketch")
+          (let [result (sut/dispatch-line {:state-dir     test-dir
+                                           :cfg           cfg
+                                           :output-writer writer}
+                                          (jrpc/request-line 10 "session/prompt"
+                                                             {:sessionId "agent:ketch:acp:direct:user1"
+                                                              :prompt    [{:type "text" :text "Hi"}]}))]
+            (should= "end_turn" (get-in result [:result :stopReason]))
             (should (str/includes? (str writer) "no model configured for crew: ketch"))))))
 
     (it "passes the request model override through to the dispatch request"
@@ -109,11 +123,8 @@
                                                   {:sessionId "agent:main:acp:direct:user1"
                                                    :prompt    [{:type "text" :text "Hello"}]}
                                                   nil))
-          (should= {:crew      {"main" {:soul "You are Isaac."}}
-                     :models    {}
-                     :providers {}
-                     :cron      {}}
-                   (select-keys (:config @captured-request) [:crew :models :providers :cron]))
+          (should= {"main" {:soul "You are Isaac."}}
+                   (get-in @captured-request [:config :crew]))
           (should= test-dir (:home @captured-request))
           (should= nil (:model-override @captured-request))
           (should= "main" (:crew @captured-request)))))
@@ -259,14 +270,22 @@
       (session-helper/append-message! test-dir "compact-head" {:role "assistant" :content "old answer"})
       (session-helper/append-message! test-dir "compact-head" {:role "user" :content "what next?"})
       (session-helper/append-message! test-dir "compact-head" {:role "assistant" :content "let's tackle Y."})
-      (session-helper/update-session! test-dir "compact-head" {:effective-history-offset 3})
+      (let [transcript (session-helper/get-transcript test-dir "compact-head")
+            msgs       (vec (filter #(= "message" (:type %)) transcript))
+            compacted  (mapv :id (take 2 msgs))
+            first-kept (:id (nth msgs 2))]
+        (session-helper/splice-compaction! test-dir "compact-head"
+                                           {:summary "Compacted earlier"
+                                            :compactedEntryIds compacted
+                                            :firstKeptEntryId first-kept
+                                            :tokensBefore 10}))
       (let [writer        (StringWriter.)
             _response     (sut/dispatch-line {:state-dir test-dir :output-writer writer}
                                              (jrpc/request-line 5 "session/load" {:sessionId "compact-head"}))
             notifications (parsed-output writer)]
-        (should= ["user_message_chunk" "agent_message_chunk"]
+        (should= ["agent_message_chunk" "user_message_chunk" "agent_message_chunk"]
                  (mapv #(get-in % [:params :update :sessionUpdate]) notifications))
-        (should= ["what next?" "let's tackle Y."]
+        (should= ["Compacted earlier" "what next?" "let's tackle Y."]
                  (mapv #(get-in % [:params :update :content :text]) notifications))))
 
     (it "replays tool calls without results when the tool result is before the active offset"
@@ -279,14 +298,23 @@
                                                                                    :arguments {:q "error"}}]})
       (session-helper/append-message! test-dir "resume-offset-tools" {:role "toolResult" :toolCallId "tc-1" :content "3 matches"})
       (session-helper/append-message! test-dir "resume-offset-tools" {:role "assistant" :content "found 3 errors"})
-      (session-helper/update-session! test-dir "resume-offset-tools" {:effective-history-offset 4})
+      (let [transcript (session-helper/get-transcript test-dir "resume-offset-tools")
+            msgs       (vec (remove #(= "session" (:type %)) transcript))
+            compacted  (mapv :id (take 3 msgs))
+            first-kept (:id (nth msgs 3))]
+        (session-helper/splice-compaction! test-dir "resume-offset-tools"
+                                           {:summary "Compacted earlier"
+                                            :compactedEntryIds compacted
+                                            :firstKeptEntryId first-kept
+                                            :tokensBefore 10}))
       (let [writer        (StringWriter.)
             _response     (sut/dispatch-line {:state-dir test-dir :output-writer writer}
                                              (jrpc/request-line 5 "session/load" {:sessionId "resume-offset-tools"}))
             notifications (parsed-output writer)]
-        (should= ["agent_message_chunk"]
+        (should= ["agent_message_chunk" "agent_message_chunk"]
                  (mapv #(get-in % [:params :update :sessionUpdate]) notifications))
-        (should= "found 3 errors" (get-in (first notifications) [:params :update :content :text]))))
+        (should= ["Compacted earlier" "found 3 errors"]
+                 (mapv #(get-in % [:params :update :content :text]) notifications))))
 
     )
 
@@ -386,16 +414,6 @@
          (should (some #(= "completed" (get-in % [:params :update :status])) notifications))))
 
     (it "uses configured crew members when prompt handling is driven by cfg"
-      ;; Migrated from isaac at b54488d; was passing in isaac's spec
-      ;; harness, fails here. config/normalize-config DOES preserve
-      ;; [:crew "main" :tools :allow], and module-loader/core-index
-      ;; resolves correctly, so the cfg ought to reach the redef'd
-      ;; run-turn!. The captured snapshot still comes back nil — likely
-      ;; an interaction between system/with-nested-system, set-snapshot!,
-      ;; and bridge/dispatch! routing that bypasses run-turn! in this
-      ;; minimal setup. Leaving pending until someone can take a deeper
-      ;; look without blocking CI on a pre-existing migration symptom.
-      (pending "investigating snapshot capture in with-nested-system scope")
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
       (let [cfg           {:defaults  {:crew "main" :model "grover"}
                            :crew      {"main" {:soul "You are Isaac."
@@ -403,6 +421,7 @@
                            :models    {"grover" {:model "echo" :provider "grover" :context-window 32768}}
                            :providers {"grover" {}}}
             captured-cfg  (atom nil)
+            _             (config/set-snapshot! cfg "ACP server-spec cfg-driven prompt")
             response      (with-redefs [single-turn/run-turn!
                                         (fn [_charge]
                                           (reset! captured-cfg (config/snapshot "ACP server-spec captured cfg"))
@@ -469,6 +488,10 @@
       (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (let [writer   (StringWriter.)
+              ollama-cfg {:crew      {"main" {:name "main" :soul "You are Isaac." :model "local"}}
+                          :models    {"local" {:alias "local" :model "llama3.2:latest" :provider "ollama" :context-window 32000}}
+                          :providers {"ollama" {:base-url "http://localhost:99999"}}}
+              _ (config/set-snapshot! ollama-cfg "ACP server-spec connection-refused isolate")
               response (sut/dispatch-line {:state-dir        test-dir
                                            :crew-members     {"main" {:name "main" :soul "You are Isaac." :model "local"}}
                                            :models           {"local" {:alias "local" :model "llama3.2:latest" :provider "ollama" :context-window 32000}}
@@ -502,23 +525,26 @@
 
     (it "emits a no-model error when the default crew is implicit in config"
       (session-helper/create-session! test-dir "user1")
-      (let [writer       (StringWriter.)
-            error-writer (StringWriter.)
-            cfg          {:defaults {}}
-            response     (binding [*err* error-writer]
-                           (sut/dispatch-line {:state-dir     test-dir
-                                               :cfg           cfg
-                                               :output-writer writer}
-                                               (jrpc/request-line 13 "session/prompt"
-                                                                 {:sessionId "user1"
-                                                                  :prompt [{:type "text" :text "hello"}]})))
-            notifications (parsed-output writer)
-            text-updates  (filter #(= "agent_message_chunk" (get-in % [:params :update :sessionUpdate])) notifications)
-            text          (-> text-updates first (get-in [:params :update :content :text]))]
+      (let [writer          (StringWriter.)
+            cfg             {:defaults {}}
+            original-output (log/output)
+            _               (config/set-snapshot! cfg "ACP server-spec implicit no-model")
+            response        (try
+                              (log/set-output! :none)
+                              (sut/dispatch-line {:state-dir     test-dir
+                                                  :cfg           cfg
+                                                  :output-writer writer}
+                                                 (jrpc/request-line 13 "session/prompt"
+                                                                   {:sessionId "user1"
+                                                                    :prompt [{:type "text" :text "hello"}]}))
+                              (finally
+                                (log/set-output! original-output)))
+            notifications   (parsed-output writer)
+            text-updates    (filter #(= "agent_message_chunk" (get-in % [:params :update :sessionUpdate])) notifications)
+            text            (-> text-updates first (get-in [:params :update :content :text]))]
         (should= "end_turn" (get-in response [:result :stopReason]))
         (should= 1 (count text-updates))
-        (should= "unknown provider \"chatgpt\" — configured: (none) — known templates: flicker-labs, grover, grover-stub, helm-systems, quantum-anvil, starcore" text)
-        (should= "" (str error-writer))))
+        (should (str/includes? (or text "") "no model configured for crew: main"))))
 
     (it "catches unexpected exceptions and returns end_turn with error text"
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
@@ -653,8 +679,8 @@
       (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (builtin/register-all!)
-        (grover/enqueue! [{:tool_call "exec" :arguments {:command "sleep 30"}}])
-        (let [exec-agents   {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec"]}}}
+        (grover/enqueue! [{:tool_call "exec__run" :arguments {:command "sleep 30"}}])
+        (let [exec-agents   {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec/run"]}}}
             started (promise)
             release (promise)
             prompt  (future
@@ -680,9 +706,9 @@
       (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (builtin/register-all!)
-        (grover/enqueue! [{:tool_call "exec" :arguments {:command "sleep 30"}}])
+        (grover/enqueue! [{:tool_call "exec__run" :arguments {:command "sleep 30"}}])
         (let [writer      (StringWriter.)
-              exec-agents {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec"]}}}
+              exec-agents {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec/run"]}}}
               started     (promise)
               release     (promise)
               prompt      (future

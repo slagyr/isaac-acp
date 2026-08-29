@@ -29,6 +29,21 @@
 ;; equivalent of what production gets via the :cli manifest extension.
 (cli-registry/register! (acp-cli/make-command))
 
+(defn- ensure-grover-test-provider! []
+  (grover/install-test-fixture!)
+  (when-not (g/get :provider-configs)
+    (g/assoc! :provider-configs {"grover" {:api "grover" :auth "none"}})))
+
+(defn- commit-acp-feature-snapshot!
+  "Pin-bump fixture: current agent resolve-behavior reads the loader snapshot,
+   not the charge :config. Feature dispatch must commit the on-disk grover
+   config the way CLI stdio already does, or every prompt dies :no-model."
+  [state-dir]
+  (when state-dir
+    (let [loaded (:config (config/load-config-result {:root state-dir}))]
+      (config/set-snapshot! loaded "ACP feature dispatch isolate snapshot")
+      loaded)))
+
 (defn- acp-isaac-run-preflight! []
   (let [root      (g/get :root)
         root-home (when (and root (str/ends-with? root "/.isaac"))
@@ -169,6 +184,7 @@
                              state-dir
                              (let [agents (g/get :agents)
                                    models (g/get :models)
+                                   loaded (commit-acp-feature-snapshot! state-dir)
                                    result (acp-server/dispatch-line
                                             (cond-> {:state-dir        state-dir
                                                      :provider-configs (g/get :provider-configs)
@@ -176,7 +192,7 @@
                                               agents (assoc :crew-members agents)
                                               models (assoc :models models)
                                               (and (nil? agents) (nil? models))
-                                              (assoc :cfg (:config (config/load-config-result {:root state-dir}))))
+                                              (assoc :cfg loaded))
                                             line)]
                                (enqueue-output-lines! live-writer)
                                (record-dispatch-result! result))
@@ -469,6 +485,7 @@
         (g/should= [] (:failures result))))))
 
 (defn acp-client-initialized []
+  (ensure-grover-test-provider!)
   (send-client-line! (json/generate-string {:jsonrpc "2.0"
                                             :id 0
                                             :method "initialize"
@@ -478,6 +495,7 @@
     (throw (ex-info "ACP initialize did not return a response" {:id 0}))))
 
 (defn acp-commands-registered []
+  (ensure-grover-test-provider!)
   true)
 
 ;; region ----- Step routing -----

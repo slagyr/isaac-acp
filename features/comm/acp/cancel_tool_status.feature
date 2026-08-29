@@ -5,7 +5,7 @@ Feature: Cancelled Tool Call Status
 
   Background:
     Given default Grover setup
-    And the crew "main" allows tools: "exec"
+    And the crew "main" allows tools: "exec/run"
     And the built-in tools are registered
     And the ACP client has initialized
 
@@ -15,7 +15,7 @@ Feature: Cancelled Tool Call Status
       | cancel-tool |
     And the following model responses are queued:
       | type      | tool_call | arguments               |
-      | tool_call | exec      | {"command": "sleep 30"} |
+      | tool_call | exec__run | {"command": "sleep 30"} |
     When the ACP client sends request 2 asynchronously:
       | key                   | value          |
       | method                | session/prompt |

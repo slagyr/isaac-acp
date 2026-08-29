@@ -4,7 +4,7 @@ Feature: ACP Turn Cancellation
 
   Background:
     Given default Grover setup
-    And the crew "main" allows tools: "exec"
+    And the crew "main" allows tools: "exec/run"
     And the following sessions exist:
       | name        |
       | cancel-test |
@@ -14,7 +14,7 @@ Feature: ACP Turn Cancellation
   Scenario: session/cancel interrupts a running exec and returns cancelled
     Given the following model responses are queued:
       | tool_call | arguments               |
-      | exec      | {"command": "sleep 30"} |
+      | exec__run | {"command": "sleep 30"} |
     When the ACP client sends request 2 asynchronously:
       | key                   | value          |
       | method                | session/prompt |
@@ -48,7 +48,7 @@ Feature: ACP Turn Cancellation
   Scenario: session remains usable after ACP cancel
     Given the following model responses are queued:
       | tool_call | arguments               |
-      | exec      | {"command": "sleep 30"} |
+      | exec__run | {"command": "sleep 30"} |
     When the ACP client sends request 2 asynchronously:
       | key                   | value          |
       | method                | session/prompt |

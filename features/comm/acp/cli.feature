@@ -193,7 +193,7 @@ Feature: ACP command
     Given the built-in tools are registered
     And the following model responses are queued:
       | tool_call | arguments              |
-      | exec      | {"command": "echo hi"} |
+      | exec__run | {"command": "echo hi"} |
     And the following sessions exist:
       | name      |
       | tool-test |

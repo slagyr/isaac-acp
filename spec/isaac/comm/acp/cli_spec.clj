@@ -11,6 +11,7 @@
     [isaac.util.jsonrpc :as dispatch]
     [isaac.cli.registry :as registry]
     [isaac.fs :as fs]
+    [isaac.llm.api.grover :as grover]
     [isaac.main :as main]
     [isaac.foundation.cli-steps :as cli-steps]
     [isaac.session.session-steps :as session-steps]
@@ -24,7 +25,8 @@
 (def base-opts
   {:state-dir "/test/acp"
    :agents    {"main" {:name "main" :soul "You are Isaac." :model "grover"}}
-   :models    {"grover" {:alias "grover" :model "echo" :provider "grover" :context-window 32768}}})
+   :models    {"grover" {:alias "grover" :model "echo" :provider "grover" :context-window 32768}}
+   :provider-configs {"grover" {:api "grover" :auth "none"}}})
 
 (defn- output-messages [output]
   (->> (str/split-lines (or output ""))
@@ -97,7 +99,9 @@
   #_{:clj-kondo/ignore [:invalid-arity]}
   (around [it]
     (system/with-system {:config (atom nil)}
-      (session-helper/with-memory-store (mem-run it))))
+      (session-helper/with-memory-store
+        (do (grover/install-test-fixture!)
+            (mem-run it)))))
 
   (it "fails clearly when local config is missing"
     (let [{:keys [stderr exit]} (run-with-stdin "" {:home "/test/no-config"})]
