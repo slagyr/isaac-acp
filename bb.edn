@@ -16,7 +16,7 @@
         babashka/process {:mvn/version "0.5.22"}
         io.github.slagyr/gherclj {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
         io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                           :git/sha "140b5c1064580eaed649cce1d05d5043a27e5d1d"}
+                                           :git/sha "16f478657b9534d3cb9d406327e686190838168c"}
         io.github.slagyr/isaac-foundation-spec {:git/url "https://github.com/slagyr/isaac-foundation.git"
                                                 :git/sha "140b5c1064580eaed649cce1d05d5043a27e5d1d"
                                                 :deps/root "spec"}
@@ -24,7 +24,7 @@
                                                         :git/sha "140b5c1064580eaed649cce1d05d5043a27e5d1d"
                                                         :deps/root "spec-support"}
         io.github.slagyr/isaac-agent {:git/url "https://github.com/slagyr/isaac-agent.git"
-                                      :git/sha "2c298911507bc967b5e87ce4a2cb536f36e6fba0"}
+                                      :git/sha "2b18dca2bb646ae2170e621ce872077f2ce88613"}
         io.github.slagyr/isaac-agent-spec {:git/url "https://github.com/slagyr/isaac-agent.git"
                                            :git/sha "2c298911507bc967b5e87ce4a2cb536f36e6fba0"
                                            :deps/root "spec"}
