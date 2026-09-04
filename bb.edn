@@ -16,12 +16,12 @@
         babashka/process {:mvn/version "0.5.22"}
         io.github.slagyr/gherclj {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
         io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                           :git/sha "16f478657b9534d3cb9d406327e686190838168c"}
+                                           :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"}
         io.github.slagyr/isaac-foundation-spec {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                :git/sha "140b5c1064580eaed649cce1d05d5043a27e5d1d"
+                                                :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                 :deps/root "spec"}
         io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                        :git/sha "140b5c1064580eaed649cce1d05d5043a27e5d1d"
+                                                        :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                         :deps/root "spec-support"}
         io.github.slagyr/isaac-agent {:git/url "https://github.com/slagyr/isaac-agent.git"
                                       :git/sha "2b18dca2bb646ae2170e621ce872077f2ce88613"}
@@ -34,10 +34,10 @@
                                                     :git/sha "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"
                                                     :deps/root "spec-support"}
         marigold.bridge/marigold.bridge {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                         :git/sha "140b5c1064580eaed649cce1d05d5043a27e5d1d"
+                                         :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                          :deps/root "modules/marigold.bridge"}
         marigold.longwave/marigold.longwave {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                             :git/sha "140b5c1064580eaed649cce1d05d5043a27e5d1d"
+                                             :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                              :deps/root "modules/marigold.longwave"}}
 
  :tasks
