@@ -1,8 +1,8 @@
 (ns isaac.comm.acp
   (:require
+    [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.comm.protocol :as comm]
     [isaac.comm.render :as render]
-    [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.logger :as log]
     [isaac.util.jsonrpc :as jrpc]))
 
@@ -48,8 +48,8 @@
         commands      (->> commands
                            (sort-by rank)
                            (map advertised-command))]
-  (jsonrpc/session-update session-id {:sessionUpdate     "available_commands_update"
-                                      :availableCommands commands})))
+    (jsonrpc/session-update session-id {:sessionUpdate     "available_commands_update"
+                                        :availableCommands commands})))
 
 (defn- tool-kind [tool-name]
   (case tool-name
@@ -125,31 +125,54 @@
                       :toolCallId    (:id tool-call)
                       :status        "cancelled"}}})
 
-(deftype AcpComm [output-writer]
+(defn- bulletin->thought [bulletin]
+  (case (:kind bulletin)
+    :compaction/start "compacting..."
+    :compaction/success "compacted."
+    :compaction/failure (str "compaction failed: "
+                             (or (get bulletin :message)
+                                 (get bulletin :error)
+                                 (get-in bulletin [:payload :message])
+                                 (get-in bulletin [:payload :error])))
+    :compaction/disabled (str "compaction disabled: "
+                              (name (or (get bulletin :reason)
+                                        (get-in bulletin [:payload :reason]))))
+    nil))
+
+(defn- on-chatter* [this session-key _cycle text]
+  (let [display (normalize-text-chunk text)]
+    (when (seq display)
+      (write! (.-output-writer this) (text-notification session-key display)))))
+
+(defn- on-tool-call* [this session-key tool-call]
+  (log/debug :acp-comm/tool-call-emit :session session-key :toolCallId (:id tool-call) :tool (:name tool-call))
+  (write! (.-output-writer this) (tool-call-notification session-key tool-call)))
+
+(defn- on-tool-cancel* [this session-key tool-call]
+  (write! (.-output-writer this) (tool-cancel-notification session-key tool-call)))
+
+(defn- on-tool-result* [this session-key tool-call result]
+  (log/debug :acp-comm/tool-result-emit :session session-key :toolCallId (:id tool-call) :tool (:name tool-call))
+  (write! (.-output-writer this) (tool-result-notification session-key tool-call result)))
+
+(defn- on-bulletin* [this session-key bulletin]
+  (when-let [text (bulletin->thought bulletin)]
+    (write! (.-output-writer this) (thought-notification session-key text))))
+
+(defn- send!* [_ _]
+  {:ok false :transient? false})
+
+(deftype AcpComm [output-writer])
+
+(extend AcpComm
   comm/Comm
-  (on-turn-start [_ _ _] nil)
-  (on-text-chunk [_ session-key text]
-    (let [display (normalize-text-chunk text)]
-      (when (seq display)
-        (write! output-writer (text-notification session-key display)))))
-  (on-tool-call [_ session-key tool-call]
-    (log/debug :acp-comm/tool-call-emit :session session-key :toolCallId (:id tool-call) :tool (:name tool-call))
-    (write! output-writer (tool-call-notification session-key tool-call)))
-  (on-tool-cancel [_ session-key tool-call]
-    (write! output-writer (tool-cancel-notification session-key tool-call)))
-  (on-tool-result [_ session-key tool-call result]
-    (log/debug :acp-comm/tool-result-emit :session session-key :toolCallId (:id tool-call) :tool (:name tool-call))
-    (write! output-writer (tool-result-notification session-key tool-call result)))
-  (on-compaction-start [_ session-key _payload]
-    (write! output-writer (thought-notification session-key "compacting...")))
-  (on-compaction-success [_ session-key _payload]
-    (write! output-writer (thought-notification session-key "compacted.")))
-  (on-compaction-failure [_ session-key payload]
-    (write! output-writer (thought-notification session-key (str "compaction failed: " (or (:message payload) (:error payload))))))
-  (on-compaction-disabled [_ session-key payload]
-    (write! output-writer (thought-notification session-key (str "compaction disabled: " (name (:reason payload))))))
-  (on-turn-end [_ _ _] nil)
-  (send! [_ _] {:ok false :transient? false}))
+  (merge comm/defaults
+         {:on-chatter     on-chatter*
+          :on-tool-call   on-tool-call*
+          :on-tool-cancel on-tool-cancel*
+          :on-tool-result on-tool-result*
+          :on-bulletin    on-bulletin*
+          :send!          send!*}))
 
 (defn make [host]
   (->AcpComm (:output-writer host)))

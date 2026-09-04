@@ -7,6 +7,7 @@
     [isaac.comm.acp :as sut]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.fs :as fs]
+    [isaac.logger :as log]
     [isaac.system :as system]
     [speclj.core :refer :all])
   (:import (java.io StringWriter)))
@@ -17,6 +18,14 @@
        (mapv #(json/parse-string % true))))
 
 (describe "ACP channel"
+
+  (around [it]
+    (let [original-output (log/output)]
+      (try
+        (log/set-output! :none)
+        (it)
+        (finally
+          (log/set-output! original-output)))))
 
   (it "exposes the AcpComm constructor and no longer exposes AcpChannel"
     (should-not-throw (requiring-resolve 'isaac.comm.acp/->AcpComm))
@@ -70,8 +79,8 @@
   (it "wraps preformatted slash blocks for markdown clients"
     (let [writer (StringWriter.)
           ch     (sut/channel writer)]
-      (comm/on-text-chunk ch "agent:main:acp:direct:user1"
-                          (render/preformatted-chunk "Session Status\nCrew main"))
+      (comm/on-chatter ch "agent:main:acp:direct:user1" nil
+                       (render/preformatted-chunk "Session Status\nCrew main"))
       (let [text (get-in (first (parsed-output writer)) [:params :update :content :text])]
         (should (re-find #"```text" text))
         (should (re-find #"Session Status" text)))))
@@ -79,9 +88,9 @@
   (it "preserves whitespace-bearing text chunks in session/update notifications"
     (let [writer (StringWriter.)
           ch     (sut/channel writer)]
-      (comm/on-text-chunk ch "agent:main:acp:direct:user1" "Once ")
-      (comm/on-text-chunk ch "agent:main:acp:direct:user1" " ")
-      (comm/on-text-chunk ch "agent:main:acp:direct:user1" " upon")
+      (comm/on-chatter ch "agent:main:acp:direct:user1" nil "Once ")
+      (comm/on-chatter ch "agent:main:acp:direct:user1" nil " ")
+      (comm/on-chatter ch "agent:main:acp:direct:user1" nil " upon")
       (let [notifications (parsed-output writer)]
         (should= 3 (count notifications))
         (should= "agent_message_chunk" (get-in (first notifications) [:params :update :sessionUpdate]))
@@ -92,10 +101,11 @@
   (it "writes compaction start session/update notifications to the output writer"
     (let [writer (StringWriter.)
           ch     (sut/channel writer)]
-      (comm/on-compaction-start ch "agent:main:acp:direct:user1" {:provider "grover"
-                                                                   :model "echo"
-                                                                   :total-tokens 95
-                                                                   :context-window 100})
+      (comm/on-bulletin ch "agent:main:acp:direct:user1" {:kind    :compaction/start
+                                                           :payload {:provider "grover"
+                                                                     :model "echo"
+                                                                     :total-tokens 95
+                                                                     :context-window 100}})
       (let [notifications (parsed-output writer)]
         (should= 1 (count notifications))
         (should= "agent_thought_chunk" (get-in (first notifications) [:params :update :sessionUpdate]))
