@@ -58,6 +58,38 @@
 
 (def ^:private await-timeout-ms 3000)
 
+(defn- delay-enabled? []
+  (when-let [v (ns-resolve 'isaac.llm.api.grover 'delay-enabled*)]
+    (when-let [a (deref v)]
+      (boolean (deref a)))))
+
+(defn- delay-started-promise []
+  (when-let [v (ns-resolve 'isaac.llm.api.grover 'delay-started*)]
+    (when-let [a (deref v)]
+      (deref a))))
+
+(defn- delay-gate-armed? []
+  (let [p (delay-started-promise)]
+    (boolean (and (instance? clojure.lang.IPending p) (realized? p)))))
+
+(def ^:private delay-gate-timeout-ms 2000)
+
+(defn- await-in-flight-llm-gate!
+  "When Grover delay is already enabled (Given the LLM response is delayed),
+   block until maybe-delay! arms delay-started* so session/cancel lands
+   mid-turn. No-op when delay is off — exec-sleep scenarios must not hang
+   waiting for a gate that never arms. Bounded so a classloader miss
+   cannot freeze the feature runner."
+  [turn*]
+  (when (delay-enabled?)
+    (let [deadline (+ (System/currentTimeMillis) delay-gate-timeout-ms)]
+      (loop []
+        (cond
+          (realized? turn*) nil
+          (delay-gate-armed?) nil
+          (>= (System/currentTimeMillis) deadline) nil
+          :else (do (Thread/sleep 1) (recur)))))))
+
 (defn- absolute-path [path]
   (if (str/starts-with? path "/")
     path
@@ -225,6 +257,7 @@
                       (run!)
                       (finally
                         (g/dissoc! :live-output-writer))))]
+        (await-in-flight-llm-gate! turn*)
         (g/assoc! :acp-turn-future turn*))
 
       (= "session/cancel" (:method message))

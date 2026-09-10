@@ -9,6 +9,7 @@ Feature: ACP Turn Cancellation
     And the ACP client has initialized
 
   Scenario: session/cancel during a turn stops processing
+    Given the LLM response is delayed by 30 seconds
     When the ACP client sends request 30 asynchronously:
       | key                   | value          |
       | method                | session/prompt |
