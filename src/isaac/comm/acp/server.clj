@@ -2,19 +2,15 @@
   (:require
     [isaac.bridge.cancellation :as bridge-cancel]
     [isaac.bridge.core :as bridge]
-    [isaac.charge :as charge]
     [isaac.comm.acp :as acp-comm]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
     [isaac.config.root :as root]
     [isaac.drive.turn :as single-turn]
-    [isaac.episodes.lifecycle :as lifecycle]
-    [isaac.episodes.store :as episode-store]
-    [isaac.fs :as fs]
     [isaac.llm.api.protocol :as llm-api]
     [isaac.logger :as log]
-    [isaac.nexus :as nexus]
     [isaac.server.routes]
+    [isaac.session.policy :as policy]
     [isaac.session.store.spi :as store]
     [isaac.session.transcript :as message-content]
     [isaac.slash.registry :as slash-registry]
@@ -64,28 +60,30 @@
 (defn- ambient-cfg []
   (or (config/snapshot "ACP ambient config") {}))
 
-(defn- episode-thread-id [params]
-  (or (:name params)
-      (str "acp-" (.toString (java.util.UUID/randomUUID)))))
+(defn- crew-policy [crew-id cfg session-store]
+  (policy/for-crew crew-id cfg session-store))
+
+(defn- open-acp-session! [sess session-id crew-id session-store]
+  (with-startup-cwd
+    #(policy/open-session! sess session-id
+                           {:crew          crew-id
+                            :channel       "acp"
+                            :chat-type     "direct"
+                            :origin        {:kind :acp}
+                            :session-store session-store})))
 
 (defn- session-new-handler [crew-id cfg params message]
   (let [session-store (session-store)
-        cfg           (or cfg (ambient-cfg) {})]
+        cfg           (or cfg (ambient-cfg) {})
+        sess          (crew-policy crew-id cfg session-store)]
     (if-let [existing-session (when-let [session-name (:name params)]
-                                (store/get-session session-store session-name))]
+                                (policy/get-session sess session-name))]
       (duplicate-session-response message (:id existing-session))
-      (if (lifecycle/episodes-crew? cfg crew-id)
-        (let [thread (episode-thread-id params)]
-          {:notifications [(acp-comm/available-commands-update thread (available-commands))]
-           :result        {:sessionId thread}})
-        (let [session (with-startup-cwd #((requiring-resolve 'isaac.session.context/create-with-resolved-behavior!)
-                                          (:name params) {:crew          crew-id
-                                                          :channel       "acp"
-                                                          :chatType      "direct"
-                                                          :origin        {:kind :acp}
-                                                          :session-store session-store}))]
-          {:notifications [(acp-comm/available-commands-update (:id session) (available-commands))]
-           :result        {:sessionId (:id session)}})))))
+      (let [session-id (or (:name params)
+                           (policy/default-session sess crew-id {:origin {:kind :acp}}))
+            session    (open-acp-session! sess session-id crew-id session-store)]
+        {:notifications [(acp-comm/available-commands-update (:id session) (available-commands))]
+         :result        {:sessionId (:id session)}}))))
 
 (defn- initialize-result [model provider]
   {:protocolVersion   1
@@ -186,31 +184,16 @@
       (doseq [entry transcript]
         (replay-transcript-entry! output-writer session-id tool-results entry)))))
 
-(defn- replay-open-episode! [output-writer session-key crew-id]
-  (let [cfg     (ambient-cfg)
-        fs*     (or (nexus/get :fs) (fs/instance))
-        root    (or (:root cfg) (nexus/get :root) (root/current-root))
-        open    (episode-store/find-open-on-thread fs* root crew-id session-key)
-        ss      (session-store)]
-    (when open
-      (replay-transcript! output-writer session-key (store/active-transcript ss (:id open))))
-    {:sessionId session-key}))
-
 (defn attach-session-result! [output-writer session-key]
   (let [session-store (session-store)
         cfg           (ambient-cfg)
         session       (store/get-session session-store session-key)
-        crew-id       (or (:crew session) (get-in cfg [:defaults :crew]) "main")]
-    (cond
-      (lifecycle/episodes-crew? cfg crew-id)
-      (replay-open-episode! output-writer session-key crew-id)
-
-      session
+        crew-id       (or (:crew session) (get-in cfg [:defaults :crew]) "main")
+        sess          (crew-policy crew-id cfg session-store)]
+    (if session
       (do
-        (replay-transcript! output-writer (:id session) (store/active-transcript session-store (:id session)))
+        (replay-transcript! output-writer (:id session) (policy/active-transcript sess (:id session)))
         {:sessionId (:id session)})
-
-      :else
       (throw (invalid-params (str "session not found: " session-key))))))
 
 (defn- session-load-handler [output-writer _crew-id params _message]

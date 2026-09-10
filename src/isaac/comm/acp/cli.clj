@@ -1,22 +1,20 @@
 ;; mutation-tested: 2026-05-06
 (ns isaac.comm.acp.cli
   (:require
-    [cheshire.core :as json]
-    [clojure.string :as str]
     [clojure.tools.cli :as tools-cli]
     [isaac.cli.api :as cli-api]
     [isaac.cli.registry :as registry]
-    [isaac.comm.acp.server :as server :refer [attach-session-result!]]
+    [isaac.comm.acp.server :as server]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
     [isaac.nexus :as nexus]
-    [isaac.util.jsonrpc :as jrpc]
-    [isaac.episodes.lifecycle :as lifecycle]
     [isaac.session.frequencies :as frequencies]
     [isaac.session.frequencies-cli :as frequencies-cli]
+    [isaac.session.policy :as policy]
     [isaac.session.store.spi :as store]
     [isaac.tool.builtin :as builtin]
-    [isaac.util.jsonrpc :as dispatch]))
+    [isaac.util.jsonrpc :as dispatch]
+    [isaac.util.jsonrpc :as jrpc]))
 
 (def option-spec
   ;; Session selection (--session/--crew/--session-tag/--resume/--create/--prefer)
@@ -100,6 +98,43 @@
       (store/registered-store)
       (store/create (nexus/get :state-dir))))
 
+(defn- no-session-id? [opts]
+  (and (not (:session opts))
+       (not (:resume opts))
+       (empty? (:session-tag opts))
+       (empty? (:tag opts))))
+
+(defn- frequencies-selected? [opts]
+  (or (contains? opts :create)
+      (:prefer opts)
+      (:session opts)
+      (:resume opts)
+      (seq (:session-tag opts))
+      (seq (:tag opts))))
+
+(defn- policy-default-target [crew-id cfg session-store]
+  (let [sess    (when session-store (policy/for-crew crew-id cfg session-store))
+        default (when sess (policy/default-session sess crew-id {:origin {:kind :acp}}))]
+    (if default
+      {:session-key default
+       :session     (when sess (policy/get-session sess default))
+       :create?     (boolean (and sess (nil? (policy/get-session sess default))))}
+      {:session-key nil
+       :session     nil
+       :create?     true})))
+
+(defn- resolve-attach-target [opts override cfg session-store target]
+  ;; Policy default-session is the no-id path for --crew (chronicle: most
+  ;; recent; episodes: a fresh id). Frequencies --create/--prefer/--session/
+  ;; --resume/tags still win.
+  (if (and (:crew opts)
+           (no-session-id? opts)
+           (not (frequencies-selected? opts)))
+    (policy-default-target (or (:with-crew override) (:crew opts)
+                               (get-in cfg [:defaults :crew]) "main")
+                           cfg session-store)
+    target))
+
 (defn- attach-session-handler [handlers output-writer session-key]
   (assoc handlers "session/new" (fn [_ _] (server/attach-session-result! output-writer session-key))))
 
@@ -157,16 +192,17 @@
         :else
         ;; Attach session/new to the resolved key when one exists; when the
         ;; policy resolves to create, let the server open a fresh session.
-        ;; Episode crews never attach to a chronicle — --crew with no explicit
-        ;; session defaults to a fresh thread (replay nothing; recall fills in).
-        (let [cfg          (or (config/snapshot "ACP CLI episode attach") {})
+        ;; --crew with no explicit session asks the crew's policy for
+        ;; default-session (chronicle: most recent; episodes: a fresh id).
+        (let [cfg          (or (config/snapshot "ACP CLI attach") {})
               crew-id      (or (:with-crew override) (:crew opts) (get-in cfg [:defaults :crew]) "main")
-              episode?     (lifecycle/episodes-crew? cfg crew-id)
-              attach-key   (when (and (not episode?) (not (:create? target)))
+              target       (resolve-attach-target opts override cfg (session-store) target)
+              attach-key   (when (and (not (:create? target)) (:session-key target)
+                                      (store/get-session (session-store) (:session-key target)))
                              (:session-key target))
               server-opts' (cond-> server-opts
-                             model-alias           (assoc :model-override model-alias)
-                             (or (:with-crew override) (and episode? (:crew opts)))
+                             model-alias (assoc :model-override model-alias)
+                             (or (:with-crew override) (:crew opts))
                              (assoc :crew-id crew-id))
               handlers     (cond-> (server/handlers server-opts')
                              attach-key (attach-session-handler (:output-writer server-opts') attach-key))]

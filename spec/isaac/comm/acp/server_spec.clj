@@ -11,7 +11,6 @@
     [isaac.marigold.agent :as marigold-agent]
     [isaac.module.loader :as module-loader]
     [isaac.tool.builtin :as builtin]
-    [isaac.tool.exec :as exec]
     [isaac.tool.file :as file]
     [isaac.llm.api.grover :as grover]
     [isaac.llm.api.ollama]
@@ -684,11 +683,12 @@
             started (promise)
             release (promise)
             prompt  (future
-                      (with-redefs [exec/exec-tool
-                                    (fn [{:keys [session-key]}]
+                      (with-redefs [tool-registry/execute
+                                    (fn [_name args & _]
                                       (deliver started true)
                                       @release
-                                      (if (bridge/cancelled? session-key)
+                                      (if (bridge/cancelled? (or (:session-key args)
+                                                                 (get args "session_key")))
                                         {:error :cancelled}
                                         {:result "done"}))]
                         (sut/dispatch-line (assoc prompt-opts :crew-members exec-agents :output-writer (StringWriter.))
@@ -712,11 +712,12 @@
               started     (promise)
               release     (promise)
               prompt      (future
-                            (with-redefs [exec/exec-tool
-                                          (fn [{:keys [session-key]}]
+                            (with-redefs [tool-registry/execute
+                                          (fn [_name args & _]
                                             (deliver started true)
                                             @release
-                                            (if (bridge/cancelled? session-key)
+                                            (if (bridge/cancelled? (or (:session-key args)
+                                                                       (get args "session_key")))
                                               {:error :cancelled}
                                               {:result "done"}))]
                               (sut/dispatch-line (assoc prompt-opts :crew-members exec-agents :output-writer writer)

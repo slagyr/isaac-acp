@@ -1,20 +1,21 @@
 Feature: ACP surface dispatches through the bridge — episode crews get episodes
   Every surface enters the turn engine at ONE seam: bridge dispatch, where the
   episode router, turnstiles, observers and finalization live (isaac-6yg0
-  ruling). For a crew with :conversation :episodes the ACP sessionId is the
-  THREAD (isaac-51xy decision 27): the first prompt opens an episode with
-  recall-at-open, warm prompts append, and the client never learns episodes
-  rotate beneath its handle. Chronicle crews are byte-identical to today.
-  Attaching to an episode crew with --crew replays no chronicle transcript.
+  ruling). For a crew with :session-policy :episodes the ACP sessionId is the
+  session id; episodes rotate beneath it (isaac-51xy decision 27): the first
+  prompt opens an episode with recall-at-open, warm prompts append, and the
+  client never learns episodes rotate beneath its handle. Chronicle crews are
+  byte-identical to today. Attaching to an episode crew with --crew replays no
+  chronicle transcript.
 
   Background:
     Given default Grover setup
     And the ACP commands are registered
     And the isaac EDN file "config/crew/cordelia.edn" exists with:
-      | path         | value            |
-      | model        | echo             |
-      | soul         | You are Cordelia |
-      | conversation | episodes         |
+      | path           | value            |
+      | model          | echo             |
+      | soul           | You are Cordelia |
+      | session-policy | episodes         |
     And the isaac EDN file "config/models/gist.edn" exists with:
       | path     | value  |
       | model    | gist   |
@@ -26,7 +27,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | episodes.gist-model | gist      |
     And the current time is "2026-03-01T10:00:00Z"
 
-  Scenario: session/prompt on an episodes crew opens an episode with the ACP session as thread
+  Scenario: session/prompt on an episodes crew opens an episode with the ACP session as session id
     Given the ACP client has initialized
     And the following model responses are queued:
       | type | content            | model |
@@ -45,11 +46,11 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | key               | value    |
       | result.stopReason | end_turn |
     And the log has entries matching:
-      | event            | crew     | thread    | origin.kind |
-      | :episodes/opened | cordelia | reef-chat | acp         |
+      | event            | crew     | session-id | episode                        |
+      | :episodes/opened | cordelia | reef-chat  | #"\d{4}-\d{2}-\d{2}-\d{4}-\w+" |
     And the following sessions match:
-      | id                             | crew     |
-      | #"\d{4}-\d{2}-\d{2}-\d{4}-\w+" | cordelia |
+      | id        | crew     |
+      | reef-chat | cordelia |
 
   Scenario: a warm second prompt appends to the open episode
     Given the ACP client has initialized
@@ -81,8 +82,8 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | event            |
       | :episodes/closed |
     And the following sessions match:
-      | id                             | crew     |
-      | #"\d{4}-\d{2}-\d{2}-\d{4}-\w+" | cordelia |
+      | id        | crew     |
+      | reef-chat | cordelia |
 
   Scenario: chronicle crews are unchanged — session/new creates the named session, no episode events
     Given the isaac EDN file "config/crew/ketch.edn" exists with:
@@ -117,7 +118,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | event            |
       | :episodes/opened |
 
-  Scenario: --crew on an episode crew attaches to a fresh thread and replays nothing
+  Scenario: --crew on an episode crew attaches a fresh session and replays nothing
     Given the following sessions exist:
       | name          | crew     | updated-at          |
       | cordelia-old  | cordelia | 2026-02-20T10:00:00 |
