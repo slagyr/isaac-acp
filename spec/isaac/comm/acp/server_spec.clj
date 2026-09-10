@@ -11,6 +11,7 @@
     [isaac.marigold.agent :as marigold-agent]
     [isaac.module.loader :as module-loader]
     [isaac.tool.builtin :as builtin]
+    [isaac.tool.exec :as exec]
     [isaac.tool.file :as file]
     [isaac.llm.api.grover :as grover]
     [isaac.llm.api.ollama]
@@ -679,28 +680,23 @@
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (builtin/register-all!)
         (grover/enqueue! [{:tool_call "exec__run" :arguments {:command "sleep 30"}}])
-        (let [exec-agents   {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec/run"]}}}
-            started (promise)
-            release (promise)
-            prompt  (future
-                      (with-redefs [tool-registry/execute
-                                    (fn [_name args & _]
-                                      (deliver started true)
-                                      @release
-                                      (if (bridge/cancelled? (or (:session-key args)
-                                                                 (get args "session_key")))
-                                        {:error :cancelled}
-                                        {:result "done"}))]
-                        (sut/dispatch-line (assoc prompt-opts :crew-members exec-agents :output-writer (StringWriter.))
-                                           (jrpc/request-line 32 "session/prompt"
-                                                              {:sessionId "agent:main:acp:direct:user1"
-                                                               :prompt [{:type "text" :text "run it"}]}))))]
-          (should= true (deref started 1000 nil))
+        (let [exec-agents {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec/run"]}}}
+              started     (promise)
+              prompt      (future
+                            (with-redefs [exec/exec-tool
+                                          (let [real exec/exec-tool]
+                                            (fn [args]
+                                              (deliver started true)
+                                              (real args)))]
+                              (sut/dispatch-line (assoc prompt-opts :crew-members exec-agents :output-writer (StringWriter.))
+                                                 (jrpc/request-line 32 "session/prompt"
+                                                                    {:sessionId "agent:main:acp:direct:user1"
+                                                                     :prompt [{:type "text" :text "run it"}]}))))]
+          (should= true (deref started 2000 nil))
           (sut/dispatch-line prompt-opts
                              (jrpc/notification-line "session/cancel"
                                                      {:sessionId "agent:main:acp:direct:user1"}))
-          (deliver release true)
-          (should= "cancelled" (get-in (deref prompt 1000 nil) [:result :stopReason])))))
+          (should= "cancelled" (get-in (deref prompt 5000 nil) [:result :stopReason])))))
 
     (it "emits a cancelled tool_call_update when session/cancel interrupts an in-flight exec tool"
       (marigold-agent/with-real-manifest
@@ -710,26 +706,21 @@
         (let [writer      (StringWriter.)
               exec-agents {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec/run"]}}}
               started     (promise)
-              release     (promise)
               prompt      (future
-                            (with-redefs [tool-registry/execute
-                                          (fn [_name args & _]
-                                            (deliver started true)
-                                            @release
-                                            (if (bridge/cancelled? (or (:session-key args)
-                                                                       (get args "session_key")))
-                                              {:error :cancelled}
-                                              {:result "done"}))]
+                            (with-redefs [exec/exec-tool
+                                          (let [real exec/exec-tool]
+                                            (fn [args]
+                                              (deliver started true)
+                                              (real args)))]
                               (sut/dispatch-line (assoc prompt-opts :crew-members exec-agents :output-writer writer)
                                                  (jrpc/request-line 33 "session/prompt"
                                                                     {:sessionId "agent:main:acp:direct:user1"
                                                                      :prompt [{:type "text" :text "run it"}]}))))]
-          (should= true (deref started 1000 nil))
+          (should= true (deref started 2000 nil))
           (sut/dispatch-line prompt-opts
                              (jrpc/notification-line "session/cancel"
                                                      {:sessionId "agent:main:acp:direct:user1"}))
-          (deliver release true)
-          (should= "cancelled" (get-in (deref prompt 1000 nil) [:result :stopReason]))
+          (should= "cancelled" (get-in (deref prompt 5000 nil) [:result :stopReason]))
           (let [notifications (parsed-output writer)
                 statuses      (map #(select-keys (get-in % [:params :update]) [:sessionUpdate :status])
                                    notifications)]
