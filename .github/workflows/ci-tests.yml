@@ -30,8 +30,8 @@ jobs:
       - name: Check out isaac-agent
         run: git clone --depth 1 https://github.com/slagyr/isaac-agent.git ../isaac-agent
 
-      - name: Check out isaac-server
-        run: git clone --depth 1 https://github.com/slagyr/isaac-server.git ../isaac-server
+      - name: Check out isaac-http
+        run: git clone --depth 1 https://github.com/slagyr/isaac-http.git ../isaac-http
 
       - name: Set up Java
         uses: actions/setup-java@v4

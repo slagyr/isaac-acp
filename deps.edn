@@ -8,7 +8,7 @@
                                             :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"}
          io.github.slagyr/isaac-agent      {:git/url "https://github.com/slagyr/isaac-agent.git"
                                             :git/sha "74b9acd8ed5ad000c01d0599b7eb4a803763ac51"}
-         io.github.slagyr/isaac-server     {:git/url "https://github.com/slagyr/isaac-server.git"
+         io.github.slagyr/isaac-http     {:git/url "https://github.com/slagyr/isaac-http.git"
                                             :git/sha "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"}
          com.cleancoders.c3kit/apron       {:mvn/version "3.0.0"}
          cheshire/cheshire                 {:mvn/version "5.13.0"}
@@ -17,11 +17,11 @@
  :aliases
  {:dev-local {:override-deps {io.github.slagyr/isaac-agent                   {:local/root "../isaac-agent"}
                               io.github.slagyr/isaac-agent-spec              {:local/root "../isaac-agent/spec"}
-                              io.github.slagyr/isaac-server                  {:local/root "../isaac-server"}
+                              io.github.slagyr/isaac-http                  {:local/root "../isaac-http"}
                               io.github.slagyr/isaac-foundation              {:local/root "../isaac-foundation"}
                               io.github.slagyr/isaac-foundation-spec         {:local/root "../isaac-foundation/spec"}
                               io.github.slagyr/isaac-foundation-test-support {:local/root "../isaac-foundation/spec-support"}
-                              io.github.slagyr/isaac-server-test-support     {:local/root "../isaac-server/spec-support"}
+                              io.github.slagyr/isaac-http-test-support     {:local/root "../isaac-http/spec-support"}
                               marigold.bridge/marigold.bridge                {:local/root "../isaac-foundation/modules/marigold.bridge"}
                               marigold.longwave/marigold.longwave            {:local/root "../isaac-foundation/modules/marigold.longwave"}}}
 
@@ -35,7 +35,7 @@
                        io.github.slagyr/isaac-agent-spec              {:git/url   "https://github.com/slagyr/isaac-agent.git"
                                                                        :git/sha   "74b9acd8ed5ad000c01d0599b7eb4a803763ac51"
                                                                        :deps/root "spec"}
-                       io.github.slagyr/isaac-server-test-support     {:git/url   "https://github.com/slagyr/isaac-server.git"
+                       io.github.slagyr/isaac-http-test-support     {:git/url   "https://github.com/slagyr/isaac-http.git"
                                                                        :git/sha   "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"
                                                                        :deps/root "spec-support"}
                        speclj/speclj                                  {:mvn/version "3.13.0"}
@@ -44,7 +44,7 @@
          :main-opts   ["-m" "speclj.main" "-c" "-D" "spec"]}
 
   :features {:extra-paths ["spec"]
-             :extra-deps  {io.github.slagyr/isaac-server-test-support     {:git/url   "https://github.com/slagyr/isaac-server.git"
+             :extra-deps  {io.github.slagyr/isaac-http-test-support     {:git/url   "https://github.com/slagyr/isaac-http.git"
                                                                             :git/sha   "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"
                                                                             :deps/root "spec-support"}
                            io.github.slagyr/isaac-foundation-spec         {:git/url   "https://github.com/slagyr/isaac-foundation.git"
