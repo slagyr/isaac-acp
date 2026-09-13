@@ -17,6 +17,7 @@
     [isaac.llm.api.grover :as grover]
     [isaac.llm.http :as llm-http]
     [isaac.nexus :as nexus]
+    [isaac.session.policy.episodes]
     [isaac.step-tables :as match]
     [isaac.util.jsonrpc :as dispatch]))
 
