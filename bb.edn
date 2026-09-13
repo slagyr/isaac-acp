@@ -29,15 +29,15 @@
                                            :git/sha "74b9acd8ed5ad000c01d0599b7eb4a803763ac51"
                                            :deps/root "spec"}
         io.github.slagyr/isaac-http {:git/url "https://github.com/slagyr/isaac-http.git"
-                                       :git/sha "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"}
+                                       :git/sha "8623cf1d521c59ea0ffc175ae6f4113d870bef37"}
         io.github.slagyr/isaac-http-test-support {:git/url "https://github.com/slagyr/isaac-http.git"
-                                                    :git/sha "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"
+                                                    :git/sha "8623cf1d521c59ea0ffc175ae6f4113d870bef37"
                                                     :deps/root "spec-support"}
         marigold.bridge/marigold.bridge {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                         :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
+                                         :git/sha "8623cf1d521c59ea0ffc175ae6f4113d870bef37"
                                          :deps/root "modules/marigold.bridge"}
         marigold.longwave/marigold.longwave {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                             :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
+                                             :git/sha "8623cf1d521c59ea0ffc175ae6f4113d870bef37"
                                              :deps/root "modules/marigold.longwave"}}
 
  :tasks
