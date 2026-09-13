@@ -29,9 +29,9 @@
                                            :git/sha "74b9acd8ed5ad000c01d0599b7eb4a803763ac51"
                                            :deps/root "spec"}
         io.github.slagyr/isaac-http {:git/url "https://github.com/slagyr/isaac-http.git"
-                                       :git/sha "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"}
+                                       :git/sha "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"}
         io.github.slagyr/isaac-http-test-support {:git/url "https://github.com/slagyr/isaac-http.git"
-                                                    :git/sha "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"
+                                                    :git/sha "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"
                                                     :deps/root "spec-support"}
         marigold.bridge/marigold.bridge {:git/url "https://github.com/slagyr/isaac-foundation.git"
                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"

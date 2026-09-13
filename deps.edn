@@ -9,7 +9,7 @@
          io.github.slagyr/isaac-agent      {:git/url "https://github.com/slagyr/isaac-agent.git"
                                             :git/sha "74b9acd8ed5ad000c01d0599b7eb4a803763ac51"}
          io.github.slagyr/isaac-http     {:git/url "https://github.com/slagyr/isaac-http.git"
-                                            :git/sha "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"}
+                                            :git/sha "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"}
          com.cleancoders.c3kit/apron       {:mvn/version "3.0.0"}
          cheshire/cheshire                 {:mvn/version "5.13.0"}
          org.clojure/tools.cli             {:mvn/version "1.1.230"}}
@@ -36,7 +36,7 @@
                                                                        :git/sha   "74b9acd8ed5ad000c01d0599b7eb4a803763ac51"
                                                                        :deps/root "spec"}
                        io.github.slagyr/isaac-http-test-support     {:git/url   "https://github.com/slagyr/isaac-http.git"
-                                                                       :git/sha   "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"
+                                                                       :git/sha   "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"
                                                                        :deps/root "spec-support"}
                        speclj/speclj                                  {:mvn/version "3.13.0"}
                        babashka/process                               {:mvn/version "0.5.22"}
@@ -45,20 +45,20 @@
 
   :features {:extra-paths ["spec"]
              :extra-deps  {io.github.slagyr/isaac-http-test-support     {:git/url   "https://github.com/slagyr/isaac-http.git"
-                                                                            :git/sha   "d7bbc8af9c741cb112575cd765bfc830af4c3d4c"
+                                                                            :git/sha   "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"
                                                                             :deps/root "spec-support"}
                            io.github.slagyr/isaac-foundation-spec         {:git/url   "https://github.com/slagyr/isaac-foundation.git"
-                                                                            :git/sha   "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
+                                                                            :git/sha   "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"
                                                                             :deps/root "spec"}
                            io.github.slagyr/isaac-foundation-test-support {:git/url   "https://github.com/slagyr/isaac-foundation.git"
-                                                                            :git/sha   "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
+                                                                            :git/sha   "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"
                                                                             :deps/root "spec-support"}
                            io.github.slagyr/isaac-agent-spec              {:git/url   "https://github.com/slagyr/isaac-agent.git"
-                                                                            :git/sha   "74b9acd8ed5ad000c01d0599b7eb4a803763ac51"
+                                                                            :git/sha   "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"
                                                                             :deps/root "spec"}
                            speclj/speclj                                  {:mvn/version "3.13.0"}
                            babashka/process                               {:mvn/version "0.5.22"}
-                           io.github.slagyr/gherclj                       {:git/tag "v1.3.0" :git/sha "9c3bb1d"}}
+                           io.github.slagyr/gherclj                       {:git/tag "v1.3.0" :git/sha "d60ff8bd796132fee0bccd0ca6a8c6f4f74691f4"}}
              :main-opts   ["-m" "gherclj.main"
                            "-f" "features"
                            "-s" "isaac.foundation.fs-steps"
