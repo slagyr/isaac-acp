@@ -9,7 +9,7 @@
     [isaac.drive.turn :as single-turn]
     [isaac.llm.api.protocol :as llm-api]
     [isaac.logger :as log]
-    [isaac.server.routes]
+    [isaac.http.routes]
     [isaac.session.policy :as policy]
     [isaac.session.store.spi :as store]
     [isaac.session.transcript :as message-content]

@@ -5,7 +5,7 @@
     [isaac.comm.registry :as comm-registry]
     [isaac.fs :as fs]
     [isaac.module.loader :as module-loader]
-    [isaac.server.routes :as routes]
+    [isaac.http.routes :as routes]
     [isaac.system :as system]
     [speclj.core :refer :all]))
 
