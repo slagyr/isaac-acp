@@ -31,7 +31,10 @@
         io.github.slagyr/isaac-episodes {:git/url "https://github.com/slagyr/isaac-episodes.git"
                                          :git/sha "0cbe24b55a2d94be0579a2400a11163748d5913d"
                                          :exclusions [io.github.slagyr/isaac-agent
+                                                      io.github.slagyr/isaac-agent-spec
                                                       io.github.slagyr/isaac-foundation
+                                                      io.github.slagyr/isaac-foundation-spec
+                                                      io.github.slagyr/isaac-foundation-test-support
                                                       io.github.slagyr/isaac-http]}
         io.github.slagyr/isaac-http {:git/url "https://github.com/slagyr/isaac-http.git"
                                        :git/sha "11e43014ad5c7b9c8bb693e0eb4f673bbd23991d"}
