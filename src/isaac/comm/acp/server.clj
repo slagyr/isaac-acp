@@ -2,6 +2,7 @@
   (:require
     [isaac.bridge.cancellation :as bridge-cancel]
     [isaac.bridge.core :as bridge]
+    [isaac.cli.host :as host]
     [isaac.comm.acp :as acp-comm]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
@@ -27,24 +28,12 @@
   (let [cfg (or (config/snapshot "ACP available command advertisement") {})]
     (slash-registry/all-commands (:module-index cfg)
                                  {:config cfg
-                                  :cwd    (System/getProperty "user.dir")})))
-
-(def ^:private startup-cwd (System/getProperty "user.dir"))
+                                  :cwd    (host/cwd)})))
 
 (defn- session-store []
   (or (system/get :session-store)
       (store/registered-store)
       (store/create (root/current-root))))
-
-(defn- with-startup-cwd [f]
-  (let [original (System/getProperty "user.dir")]
-    (try
-      (when-not (= startup-cwd original)
-        (System/setProperty "user.dir" startup-cwd))
-      (f)
-      (finally
-        (when-not (= startup-cwd original)
-          (System/setProperty "user.dir" original))))))
 
 (defn- invalid-params [message]
   (ex-info message {:type :invalid-params
@@ -64,13 +53,13 @@
   (policy/for-crew crew-id cfg session-store))
 
 (defn- open-acp-session! [sess session-id crew-id session-store]
-  (with-startup-cwd
-    #(policy/open-session! sess session-id
-                           {:crew          crew-id
-                            :channel       "acp"
-                            :chat-type     "direct"
-                            :origin        {:kind :acp}
-                            :session-store session-store})))
+  (policy/open-session! sess session-id
+                        {:crew          crew-id
+                         :channel       "acp"
+                         :chat-type     "direct"
+                         :origin        {:kind :acp}
+                         :cwd           (host/cwd)
+                         :session-store session-store}))
 
 (defn- session-new-handler [crew-id cfg params message]
   (let [session-store (session-store)
@@ -228,7 +217,7 @@
                              :origin {:kind :acp}
                              :state-dir (or (:state-dir ctx) (root/current-root)))
         result   (try
-                   (with-startup-cwd #(bridge/dispatch! payload))
+                   (bridge/dispatch! payload)
                   (catch Exception e
                     (log/ex :acp/turn-error e :session session-id)
                     {:error :exception :message (or (.getMessage e) "Unexpected error")}))]

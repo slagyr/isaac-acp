@@ -5,7 +5,7 @@
  ;; tools), HTTP (routes), foundation (cli/loader/config/nexus, transitive)
  ;; — NOT the legacy monolith.
  :deps  {io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                            :git/sha "ad0a97b7f039814dc92916299baf3c07a5b86f3a"}
+                                            :git/sha "1afd934fff001cd9b75c4121546d961d96e6e02a"}
          io.github.slagyr/isaac-agent      {:git/url "https://github.com/slagyr/isaac-agent.git"
                                             :git/sha "8aecfc3a57fef0803c35f81bd4a3f76292b227f1"}
          io.github.slagyr/isaac-http     {:git/url "https://github.com/slagyr/isaac-http.git"
@@ -27,10 +27,10 @@
 
   :spec {:extra-paths ["spec"]
          :extra-deps  {io.github.slagyr/isaac-foundation-spec         {:git/url   "https://github.com/slagyr/isaac-foundation.git"
-                                                                       :git/sha   "ad0a97b7f039814dc92916299baf3c07a5b86f3a"
+                                                                       :git/sha   "1afd934fff001cd9b75c4121546d961d96e6e02a"
                                                                        :deps/root "spec"}
                        io.github.slagyr/isaac-foundation-test-support {:git/url   "https://github.com/slagyr/isaac-foundation.git"
-                                                                       :git/sha   "ad0a97b7f039814dc92916299baf3c07a5b86f3a"
+                                                                       :git/sha   "1afd934fff001cd9b75c4121546d961d96e6e02a"
                                                                        :deps/root "spec-support"}
                        io.github.slagyr/isaac-agent-spec              {:git/url   "https://github.com/slagyr/isaac-agent.git"
                                                                        :git/sha   "8aecfc3a57fef0803c35f81bd4a3f76292b227f1"
@@ -64,10 +64,10 @@
                                                                                          io.github.slagyr/isaac-foundation-test-support
                                                                                          io.github.slagyr/isaac-http]}
                            io.github.slagyr/isaac-foundation-spec          {:git/url   "https://github.com/slagyr/isaac-foundation.git"
-                                                                            :git/sha   "ad0a97b7f039814dc92916299baf3c07a5b86f3a"
+                                                                            :git/sha   "1afd934fff001cd9b75c4121546d961d96e6e02a"
                                                                             :deps/root "spec"}
                            io.github.slagyr/isaac-foundation-test-support  {:git/url   "https://github.com/slagyr/isaac-foundation.git"
-                                                                            :git/sha   "ad0a97b7f039814dc92916299baf3c07a5b86f3a"
+                                                                            :git/sha   "1afd934fff001cd9b75c4121546d961d96e6e02a"
                                                                             :deps/root "spec-support"}
                            io.github.slagyr/isaac-http-test-support        {:git/url   "https://github.com/slagyr/isaac-http.git"
                                                                             :git/sha   "11e43014ad5c7b9c8bb693e0eb4f673bbd23991d"

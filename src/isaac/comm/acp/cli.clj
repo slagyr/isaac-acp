@@ -1,8 +1,10 @@
 ;; mutation-tested: 2026-05-06
 (ns isaac.comm.acp.cli
   (:require
+    [cheshire.core :as json]
     [clojure.tools.cli :as tools-cli]
     [isaac.cli.api :as cli-api]
+    [isaac.cli.host :as host]
     [isaac.cli.registry :as registry]
     [isaac.comm.acp.server :as server]
     [isaac.config.loader :as config]
@@ -70,7 +72,8 @@
     ;; run would reuse a stale snapshot left by a previous run in the same JVM
     ;; (notably across test scenarios), resolving the wrong crew model.
     (when (nil? crew-members)
-      (config/set-snapshot! raw-config "ACP stdio run config refresh"))
+      (host/ensure-runtime!
+        {:install! (fn [] (config/set-snapshot! raw-config "ACP stdio run config refresh"))}))
     (cond-> {:state-dir sdir :home home :output-writer out}
       crew-members        (assoc :crew-members crew-members)
       models              (assoc :models models)
@@ -138,21 +141,22 @@
 (defn- attach-session-handler [handlers output-writer session-key]
   (assoc handlers "session/new" (fn [_ _] (server/attach-session-result! output-writer session-key))))
 
+(def ^:dynamic *verbose-methods?* false)
+
 (defn- run-loop [handlers]
-  (let [reader (java.io.BufferedReader. *in*)]
+  (let [reader (java.io.BufferedReader. (host/in))]
     (loop []
       (when-let [line (.readLine reader)]
+        (when *verbose-methods?*
+          (when-let [method (:method (try (json/parse-string line true) (catch Exception _ nil)))]
+            (binding [*out* *err*]
+              (println method))))
         (write-result! (dispatch/handle-line handlers line))
         (recur)))))
 
 (defn- run-loop-verbose [handlers]
-  (let [dispatch* dispatch/dispatch]
-    (with-redefs [dispatch/dispatch (fn [dispatch-handlers message]
-                                      (when-let [method (:method message)]
-                                        (binding [*out* *err*]
-                                          (println method)))
-                                      (dispatch* dispatch-handlers message))]
-      (run-loop handlers))))
+  (binding [*verbose-methods?* true]
+    (run-loop handlers)))
 
 (defn- print-error! [message]
   (binding [*out* *err*]
@@ -168,8 +172,11 @@
 
 (defn- run-local [opts]
   (let [server-opts (build-server-opts opts)]
-    (nexus/register! [:state-dir] (:state-dir server-opts))
-    (store/register! (or (config/snapshot "ACP CLI local session-store bootstrap") {}) (:state-dir server-opts))
+    (host/ensure-runtime!
+      {:install!
+       (fn []
+         (nexus/register! [:state-dir] (:state-dir server-opts))
+         (store/register! (or (config/snapshot "ACP CLI local session-store bootstrap") {}) (:state-dir server-opts)))})
     (let [override    (frequencies-cli/build-override opts)
           model-alias (:with-model override)
           ;; Resolve the single session ACP attaches to from the shared
@@ -206,7 +213,7 @@
                              (assoc :crew-id crew-id))
               handlers     (cond-> (server/handlers server-opts')
                              attach-key (attach-session-handler (:output-writer server-opts') attach-key))]
-          (builtin/register-all!)
+          (host/ensure-runtime! {:install! builtin/register-all!})
           (print-error! "isaac acp ready")
           (if (:verbose opts)
             (run-loop-verbose handlers)

@@ -5,18 +5,23 @@
     [clojure.string :as str]
     [gherclj.core :as g]
     [isaac.comm.acp.acp-steps :as acp-steps]
-    [isaac.comm.acp.cli :as sut]
-    [isaac.config.root :as home]
-    [isaac.util.jsonrpc :as jrpc]
-    [isaac.util.jsonrpc :as dispatch]
+    [isaac.cli.host :as host]
     [isaac.cli.registry :as registry]
+    [isaac.comm.acp.cli :as sut]
+    [isaac.config.loader :as config]
+    [isaac.config.root :as home]
+    [isaac.foundation.cli-steps :as cli-steps]
     [isaac.fs :as fs]
     [isaac.llm.api.grover :as grover]
     [isaac.main :as main]
-    [isaac.foundation.cli-steps :as cli-steps]
+    [isaac.nexus :as nexus]
     [isaac.session.session-steps :as session-steps]
     [isaac.session.spec-helper :as session-helper]
+    [isaac.session.store.spi :as store]
     [isaac.system :as system]
+    [isaac.tool.builtin :as builtin]
+    [isaac.util.jsonrpc :as dispatch]
+    [isaac.util.jsonrpc :as jrpc]
     [speclj.core :refer :all])
   (:import
     (java.io BufferedReader StringReader StringWriter)
@@ -185,7 +190,7 @@
           (should= 0 exit)
           (should (str/includes? output "no model configured for crew: main"))))))
 
-  (describe "feature harness reproductions"
+  (context "feature harness reproductions"
 
     (it "passes isaac-home through cli_steps as the main home override"
       (let [captured (atom nil)]
@@ -224,7 +229,8 @@
                                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"no-model\",\"prompt\":[{\"type\":\"text\",\"text\":\"hi\"}]}}"))
       (cli-steps/isaac-run "acp --session no-model")
       (should= 0 (g/get :exit-code))
-      (should (str/includes? (g/get :output) "no model configured for crew: main")))))
+      (should (str/includes? (g/get :output) "no model configured for crew: main"))))
+    )
 
   (it "writes JSON response to stdout for each request"
     (with-redefs [dispatch/handle-line (fn [_ _] (jrpc/result 1 {:ok true}))]
@@ -305,7 +311,7 @@
       (should (str/includes? stderr "unknown model"))
       (should (str/includes? stderr "nonexistent"))))
 
-  (describe "run-fn"
+  (context "run-fn"
 
     (it "prints command help and returns 0 when --help is requested"
       (with-redefs [sut/parse-option-map (fn [_] {:options {:help true} :errors []})
@@ -326,7 +332,79 @@
                                              (reset! captured opts)
                                              0)]
           (should= 0 (sut/run-fn {:_raw-args ["--resume"] :home "/tmp/home"}))
-          (should= {:home "/tmp/home" :resume true} @captured))))
+          (should= {:home "/tmp/home" :resume true} @captured)))
+    )
 
+  (context "embedded host"
 
+    (it "runs acp over host/run-embedded without tearing down live runtime or writing user.dir"
+      (registry/register! (sut/make-command))
+      (let [root   "/test/acp-embed"
+            stdin  (jrpc/request-line 1 "initialize" {:protocolVersion 1})
+            out    (StringWriter.)
+            err    (StringWriter.)
+            fs*    (or (nexus/get :fs) (fs/mem-fs))
+            tools* (or (nexus/get :tool-registry) (atom {}))]
+        (nexus/register! [:fs] fs*)
+        (when-not (nexus/get :tool-registry)
+          (nexus/register! [:tool-registry] tools*))
+        (write-root-config! root {:defaults  {:crew "main"}
+                                  :crew      {"main" {:soul "You are Isaac." :model "grover"}}
+                                  :models    {"grover" {:model "echo" :provider "grover"}}
+                                  :providers {"grover" {}}})
+        (host/ensure-runtime!
+          {:install!
+           (fn []
+             (nexus/register! [:fs] fs*)
+             (config/set-snapshot! {:defaults {:crew "main"}} "ACP embed fixture")
+             (nexus/register! [:state-dir] root)
+             (store/register! {} root)
+             (builtin/register-all!))})
+        (let [before {:config   (config/snapshot "ACP embed before")
+                      :nexus    (nexus/necho)
+                      :tools    @tools*
+                      :user-dir (System/getProperty "user.dir")}
+              code   (host/run-embedded {:argv ["acp"]
+                                         :in   (StringReader. stdin)
+                                         :out  out
+                                         :err  err
+                                         :root root
+                                         :cwd  root
+                                         :env  {}})]
+          (should= 0 code)
+          (should (str/includes? (str err) "isaac acp ready"))
+          (should= (:config before) (config/snapshot "ACP embed after"))
+          (should (identical? (:nexus before) (nexus/necho)))
+          (should= (:tools before) @tools*)
+          (should= (:user-dir before) (System/getProperty "user.dir")))))
+
+    (it "logs inbound methods via binding, not with-redefs"
+      (registry/register! (sut/make-command))
+      (let [stdin (jrpc/request-line 1 "initialize" {:protocolVersion 1})
+            out   (StringWriter.)
+            err   (StringWriter.)
+            root  "/test/acp-verbose"
+            fs*   (or (nexus/get :fs) (fs/mem-fs))]
+        (nexus/register! [:fs] fs*)
+        (write-root-config! root {:defaults  {:crew "main"}
+                                  :crew      {"main" {:soul "You are Isaac." :model "grover"}}
+                                  :models    {"grover" {:model "echo" :provider "grover"}}
+                                  :providers {"grover" {}}})
+        (host/ensure-runtime!
+          {:install!
+           (fn []
+             (nexus/register! [:fs] fs*)
+             (config/set-snapshot! {:defaults {:crew "main"}} "ACP verbose fixture")
+             (nexus/register! [:state-dir] root)
+             (store/register! {} root)
+             (builtin/register-all!))})
+        (should= 0 (host/run-embedded {:argv ["acp" "--verbose"]
+                                       :in   (StringReader. stdin)
+                                       :out  out
+                                       :err  err
+                                       :root root
+                                       :cwd  root
+                                       :env  {}}))
+        (should (str/includes? (str err) "initialize"))))
+    )
   )
