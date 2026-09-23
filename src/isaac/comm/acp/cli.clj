@@ -134,7 +134,7 @@
            (no-session-id? opts)
            (not (frequencies-selected? opts)))
     (policy-default-target (or (:with-crew override) (:crew opts)
-                               (get-in cfg [:defaults :crew]) "main")
+                               (get-in cfg [:defaults :crew]))
                            cfg session-store)
     target))
 
@@ -202,7 +202,7 @@
         ;; --crew with no explicit session asks the crew's policy for
         ;; default-session (chronicle: most recent; episodes: a fresh id).
         (let [cfg          (or (config/snapshot "ACP CLI attach") {})
-              crew-id      (or (:with-crew override) (:crew opts) (get-in cfg [:defaults :crew]) "main")
+              crew-id      (or (:with-crew override) (:crew opts) (get-in cfg [:defaults :crew]))
               target       (resolve-attach-target opts override cfg (session-store) target)
               attach-key   (when (and (not (:create? target)) (:session-key target)
                                       (store/get-session (session-store) (:session-key target)))

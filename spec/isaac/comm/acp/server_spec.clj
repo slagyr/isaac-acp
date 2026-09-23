@@ -5,6 +5,7 @@
     [isaac.util.jsonrpc :as jrpc]
     [isaac.comm.acp.server :as sut]
     [isaac.config.loader :as config]
+    [isaac.config.resolve :as config-resolve]
     [isaac.drive.turn :as single-turn]
     [isaac.logger :as log]
     [isaac.marigold :as marigold]
@@ -68,7 +69,15 @@
             response (sut/dispatch-line {:state-dir test-dir :crew-members agents :models models}
                                         (jrpc/request-line 1 "initialize" {:protocolVersion 1}))]
         (should= "echo" (get-in response [:result :agentInfo :model]))
-        (should= "grover" (get-in response [:result :agentInfo :provider])))))
+        (should= "grover" (get-in response [:result :agentInfo :provider]))))
+
+    (it "resolves crew-id to nil, never main, when nothing names a crew (isaac-zule)"
+      (config/set-snapshot! {} "ACP server-spec initialize no-crew snapshot")
+      (let [captured (atom ::not-called)]
+        (with-redefs [config-resolve/resolve-crew-context (fn [_ crew-id _] (reset! captured crew-id) {})]
+          (sut/dispatch-line {:state-dir test-dir}
+                             (jrpc/request-line 2 "initialize" {:protocolVersion 1})))
+        (should-be-nil @captured))))
 
   (describe "extract-tool-calls"
 
@@ -128,6 +137,18 @@
           (should= test-dir (:home @captured-request))
           (should= nil (:model-override @captured-request))
           (should= "main" (:crew @captured-request)))))
+
+    (it "resolves crew to nil, never main, when nothing names a crew (isaac-zule)"
+      (config/set-snapshot! {} "ACP server-spec session-prompt no-crew snapshot")
+      (let [captured-request (atom nil)]
+        (with-redefs [sut/run-prompt (fn [_ _ _ request]
+                                       (reset! captured-request request)
+                                       {:stopReason "end_turn"})]
+          (#'sut/session-prompt-handler (StringWriter.) {} {} nil {} test-dir nil nil
+                                        {:sessionId "agent:none:acp:direct:user1"
+                                         :prompt    [{:type "text" :text "Hello"}]}
+                                        nil)
+          (should-be-nil (:crew @captured-request)))))
 
     (it "reads the current config snapshot for session/prompt instead of stale connection cfg"
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1" {:crew "main"})

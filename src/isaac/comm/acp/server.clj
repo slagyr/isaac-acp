@@ -108,7 +108,7 @@
     (config/normalize-config cfg*)))
 
 (defn- initialize-handler [opts _params _message]
-  (let [{:keys [crew-id crew-members models provider-configs cfg home model-override] :or {crew-id "main"}} opts
+  (let [{:keys [crew-id crew-members models provider-configs cfg home model-override]} opts
         cfg                    (effective-cfg cfg (resolve-crew-members crew-members cfg) (or models {}) (or provider-configs {}))
         {:keys [model provider]} (config-resolve/resolve-crew-context cfg crew-id (cond-> {:home home}
                                                                              model-override (assoc :model-override model-override)))]
@@ -177,7 +177,7 @@
   (let [session-store (session-store)
         cfg           (ambient-cfg)
         session       (store/get-session session-store session-key)
-        crew-id       (or (:crew session) (get-in cfg [:defaults :crew]) "main")
+        crew-id       (or (:crew session) (get-in cfg [:defaults :crew]))
         sess          (crew-policy crew-id cfg session-store)]
     (if session
       (do
@@ -246,7 +246,7 @@
         crew-members  (resolve-crew-members crew-members cfg*)
         effective-cfg (effective-cfg cfg* crew-members (or models {}) (or provider-configs {}))
         crew-id       (or (:crew session-entry) (:agent session-entry) crew-id
-                          (get-in effective-cfg [:defaults :crew]) "main")]
+                          (get-in effective-cfg [:defaults :crew]))]
     (when (nil? session-id)
       (throw (invalid-params "sessionId is required")))
     (when (nil? text)
@@ -260,7 +260,7 @@
 (defn handlers
   [{:keys [crew-id crew-members models provider-configs cfg home output-writer model-override]}]
   (let [cfg     (or cfg (ambient-cfg) {})
-        crew-id (or crew-id (get-in cfg [:defaults :crew]) "main")
+        crew-id (or crew-id (get-in cfg [:defaults :crew]))
         opts {:crew-members crew-members :models models :provider-configs provider-configs :cfg cfg :home home :crew-id crew-id :model-override model-override}]
     {"initialize"      (partial initialize-handler opts)
      "session/new"     (partial session-new-handler crew-id cfg)
