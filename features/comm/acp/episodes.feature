@@ -118,6 +118,35 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | event            |
       | :episodes/opened |
 
+  Scenario: session/new on an episodes crew never returns another crew's session
+    Given the isaac EDN file "config/crew/marvin.edn" exists with:
+      | path           | value          |
+      | model          | echo           |
+      | soul           | You are Marvin |
+      | session-policy | episodes       |
+    And the following sessions exist:
+      | name    | crew | updated-at          |
+      | session | main | 2026-02-20T10:00:00 |
+    And stdin is:
+      """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+      {"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}
+      {"jsonrpc":"2.0","id":3,"method":"session/new","params":{}}
+      """
+    When isaac is run with "acp --crew marvin"
+    Then the stdout has a JSON-RPC response for id 2:
+      | key              | value |
+      | result.sessionId | #*    |
+    And the stdout has a JSON-RPC response for id 3:
+      | key              | value |
+      | result.sessionId | #*    |
+    And the session count is 3
+    And the following sessions match:
+      | id      | crew |
+      | session | main |
+      | #*      | marvin |
+    And the exit code is 0
+
   Scenario: --crew on an episode crew attaches a fresh session and replays nothing
     Given the following sessions exist:
       | name          | crew     | updated-at          |

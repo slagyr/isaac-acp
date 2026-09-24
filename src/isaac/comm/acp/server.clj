@@ -16,8 +16,13 @@
     [isaac.session.transcript :as message-content]
     [isaac.slash.registry :as slash-registry]
     [isaac.system :as system]
+    [isaac.tool.memory :as memory]
     [isaac.util.jsonrpc :as dispatch]
-    [isaac.util.jsonrpc :as jrpc]))
+    [isaac.util.jsonrpc :as jrpc])
+  (:import
+    (java.time ZoneOffset ZonedDateTime)
+    (java.time.format DateTimeFormatter)
+    (java.util UUID)))
 
 (defn- available-commands []
   ;; slash-registry/all-commands (2-arg) merges built-ins + module-declared
@@ -46,6 +51,30 @@
                    :error   {:code    jrpc/INVALID_PARAMS
                              :message (str "session already exists: " session-id)}}})
 
+(def ^:private mint-id-formatter
+  (DateTimeFormatter/ofPattern "yyyy-MM-dd-HHmm"))
+
+(defn- mint-session-id
+  "A fresh session id for session/new when the crew's policy has no default
+   (episodes crews: default-session is deliberately nil — see
+   isaac.session.policy.episodes/default-session). Never call
+   policy/open-session! with a nil/blank name (isaac-j95x): every SPI
+   implementation refuses it rather than silently degrading it into a
+   collision with an unrelated session."
+  []
+  (let [ts     (.format mint-id-formatter (ZonedDateTime/ofInstant (memory/now) ZoneOffset/UTC))
+        suffix (subs (str (UUID/randomUUID)) 0 4)]
+    (str "acp-" ts "-" suffix)))
+
+(defn- crew-error-response [message reason]
+  {:response {:jsonrpc "2.0"
+             :id      (:id message)
+             :error   {:code    jrpc/INVALID_PARAMS
+                       :message reason}}})
+
+(defn- crew-str [crew]
+  (when crew (if (keyword? crew) (name crew) (str crew))))
+
 (defn- ambient-cfg []
   (or (config/snapshot "ACP ambient config") {}))
 
@@ -61,6 +90,17 @@
                          :cwd           (host/cwd)
                          :session-store session-store}))
 
+(defn- open-for-crew!
+  "Open session-id under crew-id via the policy SPI, catching a refusal
+   (episodes/chronicle both throw on a cross-crew id collision — see
+   isaac.session.policy/SessionPolicy's open-session! docstring) so the ACP
+   layer can turn it into a JSON-RPC error instead of an uncaught exception."
+  [sess session-id crew-id session-store]
+  (try
+    {:session (open-acp-session! sess session-id crew-id session-store)}
+    (catch Exception e
+      {:refused (or (ex-message e) "session open refused")})))
+
 (defn- session-new-handler [crew-id cfg params message]
   (let [session-store (session-store)
         cfg           (or cfg (ambient-cfg) {})
@@ -68,11 +108,23 @@
     (if-let [existing-session (when-let [session-name (:name params)]
                                 (policy/get-session sess session-name))]
       (duplicate-session-response message (:id existing-session))
-      (let [session-id (or (:name params)
-                           (policy/default-session sess crew-id {:origin {:kind :acp}}))
-            session    (open-acp-session! sess session-id crew-id session-store)]
-        {:notifications [(acp-comm/available-commands-update (:id session) (available-commands))]
-         :result        {:sessionId (:id session)}}))))
+      (let [session-id  (or (:name params)
+                            (policy/default-session sess crew-id {:origin {:kind :acp}})
+                            (mint-session-id))
+            {:keys [session refused]} (open-for-crew! sess session-id crew-id session-store)
+            opened-crew (crew-str (:crew session))
+            want-crew   (crew-str crew-id)]
+        (cond
+          refused
+          (crew-error-response message refused)
+
+          (and opened-crew want-crew (not= opened-crew want-crew))
+          (crew-error-response message
+                               (str "session " (:id session) " belongs to crew " opened-crew ", not " want-crew))
+
+          :else
+          {:notifications [(acp-comm/available-commands-update (:id session) (available-commands))]
+           :result        {:sessionId (:id session)}})))))
 
 (defn- initialize-result [model provider]
   {:protocolVersion   1

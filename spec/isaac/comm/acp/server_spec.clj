@@ -11,6 +11,7 @@
     [isaac.marigold :as marigold]
     [isaac.marigold.agent :as marigold-agent]
     [isaac.module.loader :as module-loader]
+    [isaac.session.policy :as policy]
     [isaac.tool.builtin :as builtin]
     [isaac.tool.exec :as exec]
     [isaac.tool.file :as file]
@@ -213,6 +214,23 @@
                                         (jrpc/request-line 2 "session/new" {:name "friday-debug"}))]
         (should= -32602 (get-in response [:response :error :code]))
         (should= "session already exists: friday-debug" (get-in response [:response :error :message]))))
+
+    (it "mints a fresh session id when the crew's policy has no default to offer (isaac-j95x)"
+      (let [response   (sut/dispatch-line {:state-dir test-dir}
+                                          (jrpc/request-line 2 "session/new" {:cwd "/tmp/project"}))
+            session-id (get-in response [:response :result :sessionId])]
+        (should (string? session-id))
+        (should-not= "session" session-id)
+        (should= 1 (count (session-helper/list-sessions test-dir)))))
+
+    (it "refuses (JSON-RPC error) rather than silently returning a session that belongs to a different crew (isaac-j95x)"
+      (session-helper/create-session! test-dir "session" {:crew "main"})
+      (with-redefs [policy/default-session (fn [_ _ _] "session")]
+        (let [response (sut/dispatch-line {:state-dir test-dir :crew-id "oscar"}
+                                          (jrpc/request-line 2 "session/new" {}))]
+          (should= -32602 (get-in response [:error :code]))
+          (should (re-find #"belongs to crew" (get-in response [:error :message])))
+          (should= "main" (:crew (session-helper/get-session test-dir "session"))))))
 
     )
 
