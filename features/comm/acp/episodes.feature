@@ -5,8 +5,9 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
   session id; episodes rotate beneath it (isaac-51xy decision 27): the first
   prompt opens an episode with recall-at-open, warm prompts append, and the
   client never learns episodes rotate beneath its handle. Chronicle crews are
-  byte-identical to today. Attaching to an episode crew with --crew replays no
-  chronicle transcript.
+  byte-identical to today. Attaching with --crew resumes that crew's most
+  recent session. The episodes policy is not asked for a default session
+  (isaac-asik).
 
   Background:
     Given default Grover setup
@@ -118,6 +119,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | event            |
       | :episodes/opened |
 
+  @wip
   Scenario: session/new on an episodes crew never returns another crew's session
     Given the isaac EDN file "config/crew/marvin.edn" exists with:
       | path           | value          |
@@ -140,14 +142,15 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
     And the stdout has a JSON-RPC response for id 3:
       | key              | value |
       | result.sessionId | #*    |
-    And the session count is 3
+    And the session count is 2
     And the following sessions match:
-      | id      | crew |
-      | session | main |
+      | id      | crew   |
+      | session | main   |
       | #*      | marvin |
     And the exit code is 0
 
-  Scenario: --crew on an episode crew attaches a fresh session and replays nothing
+  @wip
+  Scenario: --crew on an episode crew resumes that crew's most recent session
     Given the following sessions exist:
       | name          | crew     | updated-at          |
       | cordelia-old  | cordelia | 2026-02-20T10:00:00 |
@@ -162,8 +165,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       """
     When isaac is run with "acp --crew cordelia"
     Then the stdout has a JSON-RPC response for id 2:
-      | key              | value |
-      | result.sessionId | #*    |
-    And the stdout does not contain "Old chart"
-    And the stdout does not contain "Old course"
+      | key              | value         |
+      | result.sessionId | cordelia-old  |
     And the exit code is 0
+    And the session count is 1
