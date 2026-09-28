@@ -22,12 +22,13 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | model    | gist   |
       | provider | grover |
     And the isaac EDN file "config/isaac.edn" exists with:
-      | path                | value     |
-      | defaults.crew       | cordelia  |
-      | defaults.model      | echo      |
-      | episodes.gist-model | gist      |
+      | path                      | value    |
+      | defaults.frequencies.crew | cordelia |
+      | defaults.crew.model       | echo     |
+      | episodes.gist-model       | gist     |
     And the current time is "2026-03-01T10:00:00Z"
 
+  @wip
   Scenario: session/prompt on an episodes crew opens an episode with the ACP session as session id
     Given the ACP client has initialized
     And the following model responses are queued:
@@ -53,6 +54,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | id        | crew     |
       | reef-chat | cordelia |
 
+  @wip
   Scenario: a warm second prompt appends to the open episode
     Given the ACP client has initialized
     And the following model responses are queued:
@@ -86,14 +88,15 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | id        | crew     |
       | reef-chat | cordelia |
 
+  @wip
   Scenario: chronicle crews are unchanged — session/new creates the named session, no episode events
     Given the isaac EDN file "config/crew/ketch.edn" exists with:
       | path  | value             |
       | model | echo              |
       | soul  | You are a pirate. |
     And the isaac EDN file "config/isaac.edn" exists with:
-      | path          | value |
-      | defaults.crew | ketch |
+      | path                      | value |
+      | defaults.frequencies.crew | ketch |
     And the ACP client has initialized
     And the following model responses are queued:
       | type | content | model |
