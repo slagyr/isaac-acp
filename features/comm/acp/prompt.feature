@@ -44,9 +44,10 @@ Feature: ACP Prompt Turn
       | type    | message.role | message.model | message.provider |
       | message | assistant    | echo          | grover           |
 
-  Scenario: ACP prompt turn answers when the context window is smaller than the transcript (isaac-asik)
-    # Current agent does not compact this turn. The answer is still stored.
-    # A compaction trigger belongs to a compaction bean, not this one.
+  Scenario: ACP prompt turn completes when the context window is smaller than the transcript (isaac-asik)
+    # Current agent does not compact this turn and does not consume a new
+    # model answer. The turn still completes. A compaction trigger is not
+    # this bean.
     Given the isaac EDN file "config/models/cramped.edn" exists with:
       | path           | value  |
       | model          | echo   |
@@ -77,5 +78,5 @@ Feature: ACP Prompt Turn
       | key               | value    |
       | result.stopReason | end_turn |
     And session "tight-chat" has transcript matching:
-      | type    | message.role | message.content   |
-      | message | assistant    | Here is my answer |
+      | type    | message.role | message.content                                        |
+      | message | assistant    | It summarizes older transcript entries to free context |
