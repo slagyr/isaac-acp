@@ -16,10 +16,8 @@ Feature: ACP Streaming Updates
   # (isaac-wzn6).
   Scenario: Provider text chunks are forwarded as session/update notifications
     Given the following model responses are queued:
-      | type | content | model |
-      | text | chunkA  | echo  |
-      | text | chunkB  | echo  |
-      | text | chunkC  | echo  |
+      | type | content                      | model |
+      | text | ["chunkA" "chunkB" "chunkC"] | echo  |
     When the ACP client sends request 20:
       | key                   | value          |
       | method                | session/prompt |

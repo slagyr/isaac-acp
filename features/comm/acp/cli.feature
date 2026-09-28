@@ -127,8 +127,8 @@ Feature: ACP command
       {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"hi"}]}}
       """
     When isaac is run with "acp"
-    Then the stdout contains "no session selected"
-    And the exit code is 0
+    Then the stderr contains "no session selected"
+    And the exit code is 1
 
   Scenario: --model overrides the crew member's default model
     Given the isaac EDN file "config/models/grover.edn" exists with:
