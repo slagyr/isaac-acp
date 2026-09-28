@@ -116,21 +116,18 @@ Feature: ACP command
     And the stderr contains "target/test-home/.isaac/config/isaac.edn"
     And the exit code is 1
 
-  Scenario: acp returns an error when crew resolution yields no model
+  Scenario: a blank acp with no configured crew, session, or tags exits with no session selected (isaac-asik)
     Given isaac home "target/test-home" contains config:
       """
-      {:crew {:defaults {}}}
+      {:defaults {:frequencies {}}}
       """
-    And the following sessions exist:
-      | name       |
-      | no-model   |
     And stdin is:
       """
       {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
-      {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"no-model","prompt":[{"type":"text","text":"hi"}]}}
+      {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"hi"}]}}
       """
-    When isaac is run with "acp --session no-model"
-    Then the stdout contains "no model configured for crew"
+    When isaac is run with "acp"
+    Then the stdout contains "no session selected"
     And the exit code is 0
 
   Scenario: --model overrides the crew member's default model

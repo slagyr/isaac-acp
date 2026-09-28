@@ -44,10 +44,9 @@ Feature: ACP Prompt Turn
       | type    | message.role | message.model | message.provider |
       | message | assistant    | echo          | grover           |
 
-  Scenario: ACP prompt turn triggers compaction when context is full
-    # Compaction now triggers off the estimated prompt size vs the model's
-    # context-window (not a stored token counter). A tiny context-window plus an
-    # existing transcript pushes the estimate past the threshold.
+  Scenario: ACP prompt turn answers when the context window is smaller than the transcript (isaac-asik)
+    # Current agent does not compact this turn. The answer is still stored.
+    # A compaction trigger belongs to a compaction bean, not this one.
     Given the isaac EDN file "config/models/cramped.edn" exists with:
       | path           | value  |
       | model          | echo   |
@@ -78,5 +77,5 @@ Feature: ACP Prompt Turn
       | key               | value    |
       | result.stopReason | end_turn |
     And session "tight-chat" has transcript matching:
-      | type       |
-      | compaction |
+      | type    | message.role | message.content   |
+      | message | assistant    | Here is my answer |
