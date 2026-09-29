@@ -1,4 +1,3 @@
-@wip
 Feature: ACP connects through the agent's default frequencies
   The session resolver reads the config itself. A blank `acp` adds no
   frequencies. Built-in :prefer :recent and :create :if-missing

@@ -7,12 +7,12 @@
     [isaac.cli.host :as host]
     [isaac.cli.registry :as registry]
     [isaac.comm.acp.server :as server]
+    [isaac.config.defaults :as defaults]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
     [isaac.nexus :as nexus]
     [isaac.session.frequencies :as frequencies]
     [isaac.session.frequencies-cli :as frequencies-cli]
-    [isaac.session.policy :as policy]
     [isaac.session.store.spi :as store]
     [isaac.tool.builtin :as builtin]
     [isaac.util.jsonrpc :as dispatch]
@@ -101,45 +101,20 @@
       (store/registered-store)
       (store/create (nexus/get :state-dir))))
 
-(defn- no-session-id? [opts]
-  (and (not (:session opts))
-       (not (:resume opts))
-       (empty? (:session-tag opts))
-       (empty? (:tag opts))))
-
-(defn- frequencies-selected? [opts]
-  (or (contains? opts :create)
-      (:prefer opts)
-      (:session opts)
-      (:resume opts)
-      (seq (:session-tag opts))
-      (seq (:tag opts))))
-
-(defn- policy-default-target [crew-id cfg session-store]
-  (let [sess    (when session-store (policy/for-crew crew-id cfg session-store))
-        default (when sess (policy/default-session sess crew-id {:origin {:kind :acp}}))]
-    (if default
-      {:session-key default
-       :session     (when sess (policy/get-session sess default))
-       :create?     (boolean (and sess (nil? (policy/get-session sess default))))}
-      {:session-key nil
-       :session     nil
-       :create?     true})))
-
-(defn- resolve-attach-target [opts override cfg session-store target]
-  ;; Policy default-session is the no-id path for --crew (chronicle: most
-  ;; recent; episodes: a fresh id). Frequencies --create/--prefer/--session/
-  ;; --resume/tags still win.
-  (if (and (:crew opts)
-           (no-session-id? opts)
-           (not (frequencies-selected? opts)))
-    (policy-default-target (or (:with-crew override) (:crew opts)
-                               (get-in cfg [:defaults :crew]))
-                           cfg session-store)
-    target))
-
 (defn- attach-session-handler [handlers output-writer session-key]
   (assoc handlers "session/new" (fn [_ _] (server/attach-session-result! output-writer session-key))))
+
+(defn- create-once-handler [handlers output-writer]
+  (let [created (atom nil)
+        original (get handlers "session/new")]
+    (assoc handlers "session/new"
+           (fn [params message]
+             (if-let [session-key @created]
+               (server/attach-session-result! output-writer session-key)
+               (let [result (original params message)]
+                 (when-let [session-key (get-in result [:result :sessionId])]
+                   (reset! created session-key))
+                 result))))))
 
 (def ^:dynamic *verbose-methods?* false)
 
@@ -197,13 +172,10 @@
         (do (print-error! (:message target)) 1)
 
         :else
-        ;; Attach session/new to the resolved key when one exists; when the
-        ;; policy resolves to create, let the server open a fresh session.
-        ;; --crew with no explicit session asks the crew's policy for
-        ;; default-session (chronicle: most recent; episodes: a fresh id).
+        ;; Attach session/new to the single resolver target.
         (let [cfg          (or (config/snapshot "ACP CLI attach") {})
-              crew-id      (or (:with-crew override) (:crew opts) (get-in cfg [:defaults :crew]))
-              target       (resolve-attach-target opts override cfg (session-store) target)
+              crew-id      (or (:with-crew override) (:crew (:create-identity target))
+                               (:crew (:session target)) (:crew opts) (defaults/crew-id cfg))
               attach-key   (when (and (not (:create? target)) (:session-key target)
                                       (store/get-session (session-store) (:session-key target)))
                              (:session-key target))
@@ -212,7 +184,8 @@
                              (or (:with-crew override) (:crew opts))
                              (assoc :crew-id crew-id))
               handlers     (cond-> (server/handlers server-opts')
-                             attach-key (attach-session-handler (:output-writer server-opts') attach-key))]
+                             attach-key (attach-session-handler (:output-writer server-opts') attach-key)
+                             (:create? target) (create-once-handler (:output-writer server-opts')))]
           (host/ensure-runtime! {:install! builtin/register-all!})
           (print-error! "isaac acp ready")
           (if (:verbose opts)

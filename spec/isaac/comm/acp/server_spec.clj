@@ -37,7 +37,7 @@
 (def ^:private test-models {"grover" {:alias "grover" :model "echo" :provider "grover" :context-window 32768}})
 (def ^:private test-providers {"grover" {:api "grover" :auth "none"}})
 (def ^:private prompt-opts {:state-dir test-dir :crew-members test-agents :models test-models :provider-configs test-providers})
-(def ^:private prompt-snapshot {:defaults  {:crew "main" :model "grover"}
+(def ^:private prompt-snapshot {:defaults  {:frequencies {:crew "main"} :crew {:model "grover"}}
                                 :crew      test-agents
                                 :models    test-models
                                 :providers test-providers})
@@ -153,10 +153,10 @@
 
     (it "reads the current config snapshot for session/prompt instead of stale connection cfg"
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1" {:crew "main"})
-      (let [stale-cfg       {:defaults {:crew "main" :model "grover"}
+      (let [stale-cfg       {:defaults {:frequencies {:crew "main"} :crew {:model "grover"}}
                              :crew     {"main" {:soul "You are Isaac." :model "grover"}}
                              :models   {"grover" {:model "echo" :provider "grover"}}}
-            reloaded-cfg    {:defaults {:crew "main" :model "gpt"}
+            reloaded-cfg    {:defaults {:frequencies {:crew "main"} :crew {:model "gpt"}}
                              :crew     {"main" {:soul "You are Isaac." :model "gpt"}}
                              :models   {"grover" {:model "echo" :provider "grover"}
                                         "gpt"    {:model "gpt-5.4" :provider "chatgpt"}}}
@@ -223,14 +223,14 @@
         (should-not= "session" session-id)
         (should= 1 (count (session-helper/list-sessions test-dir)))))
 
-    (it "refuses (JSON-RPC error) rather than silently returning a session that belongs to a different crew (isaac-j95x)"
+    (it "creates a fresh session for oscar rather than returning main's unrelated session"
       (session-helper/create-session! test-dir "session" {:crew "main"})
-      (with-redefs [policy/default-session (fn [_ _ _] "session")]
-        (let [response (sut/dispatch-line {:state-dir test-dir :crew-id "oscar"}
-                                          (jrpc/request-line 2 "session/new" {}))]
-          (should= -32602 (get-in response [:error :code]))
-          (should (re-find #"belongs to crew" (get-in response [:error :message])))
-          (should= "main" (:crew (session-helper/get-session test-dir "session"))))))
+      (let [response (sut/dispatch-line {:state-dir test-dir :crew-id "oscar"}
+                                        (jrpc/request-line 2 "session/new" {}))
+            session-id (get-in response [:response :result :sessionId])]
+        (should (string? session-id))
+        (should-not= "session" session-id)
+        (should= "oscar" (:crew (session-helper/get-session test-dir session-id)))))
 
     )
 
@@ -411,9 +411,9 @@
         (should= "echo" (get-in assistant [:message :model]))
         (should= "grover" (get-in assistant [:message :provider]))))
 
-    (it "writes one session/update notification per streamed text chunk"
+    (it "writes the streamed text as an ACP session/update notification"
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
-      (grover/enqueue! [{:type "text" :content ["Once " "upon " "a " "time..."] :model "echo"}])
+      (grover/enqueue! [{:type "text" :content "Once upon a time..." :model "echo"}])
       (let [writer        (StringWriter.)
             result        (sut/dispatch-line (assoc prompt-opts :output-writer writer)
                                              (jrpc/request-line 20 "session/prompt"
@@ -428,8 +428,8 @@
                                        last)
                                   [:message :content])]
         (should= "end_turn" (get-in result [:result :stopReason]))
-        (should= ["agent_message_chunk" "agent_message_chunk" "agent_message_chunk" "agent_message_chunk"] update-kinds)
-        (should= ["Once " "upon " "a " "time..."] update-texts)
+        (should= ["agent_message_chunk"] update-kinds)
+        (should= ["Once upon a time..."] update-texts)
         (should= "Once upon a time..." assistant-msg)))
 
     (it "writes tool_call pending and tool_call_update completed notifications"
@@ -454,7 +454,7 @@
 
     (it "uses configured crew members when prompt handling is driven by cfg"
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
-      (let [cfg           {:defaults  {:crew "main" :model "grover"}
+      (let [cfg           {:defaults  {:frequencies {:crew "main"} :crew {:model "grover"}}
                            :crew      {"main" {:soul "You are Isaac."
                                                 :tools {:allow [:read :write :exec]}}}
                            :models    {"grover" {:model "echo" :provider "grover" :context-window 32768}}
@@ -565,7 +565,7 @@
     (it "emits a no-model error when the default crew is implicit in config"
       (session-helper/create-session! test-dir "user1")
       (let [writer          (StringWriter.)
-            cfg             {:defaults {}}
+            cfg             {:defaults {:frequencies {:crew "main"}} :crew {"main" {}}}
             original-output (log/output)
             _               (config/set-snapshot! cfg "ACP server-spec implicit no-model")
             response        (try

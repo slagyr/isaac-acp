@@ -4,6 +4,7 @@
     [isaac.bridge.core :as bridge]
     [isaac.cli.host :as host]
     [isaac.comm.acp :as acp-comm]
+    [isaac.config.defaults :as defaults]
     [isaac.config.loader :as config]
     [isaac.config.resolve :as config-resolve]
     [isaac.config.root :as root]
@@ -55,9 +56,7 @@
   (DateTimeFormatter/ofPattern "yyyy-MM-dd-HHmm"))
 
 (defn- mint-session-id
-  "A fresh session id for session/new when the crew's policy has no default
-   (episodes crews: default-session is deliberately nil — see
-   isaac.session.policy.episodes/default-session). Never call
+  "A fresh session id for session/new without an explicit name. Never call
    policy/open-session! with a nil/blank name (isaac-j95x): every SPI
    implementation refuses it rather than silently degrading it into a
    collision with an unrelated session."
@@ -109,7 +108,6 @@
                                 (policy/get-session sess session-name))]
       (duplicate-session-response message (:id existing-session))
       (let [session-id  (or (:name params)
-                            (policy/default-session sess crew-id {:origin {:kind :acp}})
                             (mint-session-id))
             {:keys [session refused]} (open-for-crew! sess session-id crew-id session-store)
             opened-crew (crew-str (:crew session))
@@ -229,7 +227,7 @@
   (let [session-store (session-store)
         cfg           (ambient-cfg)
         session       (store/get-session session-store session-key)
-        crew-id       (or (:crew session) (get-in cfg [:defaults :crew]))
+        crew-id       (or (:crew session) (get-in cfg [:defaults :frequencies :crew]))
         sess          (crew-policy crew-id cfg session-store)]
     (if session
       (do
@@ -267,7 +265,8 @@
                              :session-key session-id
                              :input text
                              :origin {:kind :acp}
-                             :state-dir (or (:state-dir ctx) (root/current-root)))
+                             :state-dir (or (:state-dir ctx) (root/current-root))
+                             :config (assoc (:config ctx) :root (or (:state-dir ctx) (root/current-root))))
         result   (try
                    (bridge/dispatch! payload)
                   (catch Exception e
@@ -298,13 +297,14 @@
         crew-members  (resolve-crew-members crew-members cfg*)
         effective-cfg (effective-cfg cfg* crew-members (or models {}) (or provider-configs {}))
         crew-id       (or (:crew session-entry) (:agent session-entry) crew-id
-                          (get-in effective-cfg [:defaults :crew]))]
+                          (defaults/crew-id effective-cfg))]
     (when (nil? session-id)
       (throw (invalid-params "sessionId is required")))
     (when (nil? text)
       (throw (invalid-params "Invalid params: no text in prompt")))
     (run-prompt output-writer session-id text {:config         effective-cfg
                                                :home           home
+                                               :state-dir      (root/current-root)
                                                :model-override model-override
                                                :origin         {:kind :acp}
                                                :crew           crew-id})))
@@ -312,7 +312,7 @@
 (defn handlers
   [{:keys [crew-id crew-members models provider-configs cfg home output-writer model-override]}]
   (let [cfg     (or cfg (ambient-cfg) {})
-        crew-id (or crew-id (get-in cfg [:defaults :crew]))
+        crew-id (or crew-id (get-in cfg [:defaults :frequencies :crew]))
         opts {:crew-members crew-members :models models :provider-configs provider-configs :cfg cfg :home home :crew-id crew-id :model-override model-override}]
     {"initialize"      (partial initialize-handler opts)
      "session/new"     (partial session-new-handler crew-id cfg)

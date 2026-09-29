@@ -29,6 +29,7 @@
 
 (def base-opts
   {:state-dir "/test/acp"
+   :crew      "main"
    :agents    {"main" {:name "main" :soul "You are Isaac." :model "grover"}}
    :models    {"grover" {:alias "grover" :model "echo" :provider "grover" :context-window 32768}}
    :provider-configs {"grover" {:api "grover" :auth "none"}}})
@@ -139,7 +140,7 @@
       (delete-tree! "/tmp/acp-ignored-home")
       (with-user-home "/tmp/acp-ignored-home"
         (fn []
-          (write-root-config! explicit-root {:defaults  {:crew "main" :model "grover"}
+          (write-root-config! explicit-root {:defaults  {:frequencies {:crew "main"} :crew {:model "grover"}}
                                              :crew      {"main" {:soul "You are Isaac." :model "grover"}}
                                              :models    {"grover" {:model "echo" :provider "grover"}}
                                              :providers {"grover" {}}})
@@ -162,7 +163,7 @@
           state-dir  (str home-dir "/.isaac")
           session-id "no-model"]
       (delete-tree! home-dir)
-      (write-config! home-dir {:crew {:defaults {}}})
+      (write-config! home-dir {:defaults {:frequencies {:crew "main"}} :crew {"main" {}}})
       (session-helper/create-session! state-dir session-id)
       (let [{:keys [output exit]}
             (run-main! ["acp" "--session" session-id]
@@ -178,7 +179,7 @@
       (let [home-dir   "/test/acp-home"
             state-dir  "/test/acp-state/.isaac"
             session-id "no-model"]
-        (write-config! home-dir {:crew {:defaults {}}})
+        (write-config! home-dir {:defaults {:frequencies {:crew "main"}} :crew {"main" {}}})
         (session-helper/create-session! state-dir session-id)
         (let [{:keys [output exit]}
               (run-main! ["acp" "--session" session-id]
@@ -223,7 +224,7 @@
       (g/reset!)
       (session-steps/default-grover-setup)
       (acp-steps/acp-commands-registered)
-      (acp-steps/isaac-home-contains-config "target/test-home" "{:crew {:defaults {}}}")
+      (acp-steps/isaac-home-contains-config "target/test-home" "{:defaults {:frequencies {:crew \"main\"}} :crew {\"main\" {}}}")
       (session-steps/sessions-exist {:headers ["name"] :rows [["no-model"]]})
       (cli-steps/stdin-is (str "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1}}\n"
                                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"no-model\",\"prompt\":[{\"type\":\"text\",\"text\":\"hi\"}]}}"))
@@ -289,6 +290,17 @@
       (should= {:sessionId "user1"}
                (get-in (last messages) [:result]))))
 
+  (it "reuses the resolver-created session for a second session/new request"
+    (let [state-dir (str "/test/acp-created-" (random-uuid))
+          requests  (str (jrpc/request-line 1 "session/new" {}) "\n"
+                         (jrpc/request-line 2 "session/new" {}) "\n")
+          {:keys [messages exit]} (run-with-stdin requests (assoc base-opts :state-dir state-dir))
+          ids (mapv #(get-in % [:result :sessionId]) (filter :id messages))]
+      (should= 0 exit)
+      (should= 2 (count ids))
+      (should= (first ids) (second ids))
+      (should= 1 (count (session-helper/list-sessions state-dir)))))
+
   (it "fails when --session session does not exist"
     (let [missing "nonexistent"
           {:keys [stderr exit]} (run-with-stdin "" (assoc base-opts :session missing :state-dir "/test/acp-missing"))]
@@ -348,7 +360,7 @@
         (nexus/register! [:fs] fs*)
         (when-not (nexus/get :tool-registry)
           (nexus/register! [:tool-registry] tools*))
-        (write-root-config! root {:defaults  {:crew "main"}
+        (write-root-config! root {:defaults  {:frequencies {:crew "main"}}
                                   :crew      {"main" {:soul "You are Isaac." :model "grover"}}
                                   :models    {"grover" {:model "echo" :provider "grover"}}
                                   :providers {"grover" {}}})
@@ -356,7 +368,7 @@
           {:install!
            (fn []
              (nexus/register! [:fs] fs*)
-             (config/set-snapshot! {:defaults {:crew "main"}} "ACP embed fixture")
+             (config/set-snapshot! {:defaults {:frequencies {:crew "main"}}} "ACP embed fixture")
              (nexus/register! [:state-dir] root)
              (store/register! {} root)
              (builtin/register-all!))})
@@ -386,7 +398,7 @@
             root  "/test/acp-verbose"
             fs*   (or (nexus/get :fs) (fs/mem-fs))]
         (nexus/register! [:fs] fs*)
-        (write-root-config! root {:defaults  {:crew "main"}
+        (write-root-config! root {:defaults  {:frequencies {:crew "main"}}
                                   :crew      {"main" {:soul "You are Isaac." :model "grover"}}
                                   :models    {"grover" {:model "echo" :provider "grover"}}
                                   :providers {"grover" {}}})
@@ -394,7 +406,7 @@
           {:install!
            (fn []
              (nexus/register! [:fs] fs*)
-             (config/set-snapshot! {:defaults {:crew "main"}} "ACP verbose fixture")
+             (config/set-snapshot! {:defaults {:frequencies {:crew "main"}}} "ACP verbose fixture")
              (nexus/register! [:state-dir] root)
              (store/register! {} root)
              (builtin/register-all!))})
