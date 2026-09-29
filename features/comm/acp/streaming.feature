@@ -15,7 +15,11 @@ Feature: ACP Streaming Updates
   # neutral chunks to avoid codifying the trim bug we used to have
   # (isaac-wzn6).
   Scenario: Provider text chunks are forwarded as session/update notifications
-    Given the following model responses are queued:
+    A crew with tools streams its turns (the drive's streaming path); a crew
+    with no tools answers in one shot. Real crews have tools.
+    Given the built-in tools are registered
+    And the crew "main" allows tools: "fs/grep"
+    And the following model responses are queued:
       | type        | content                        | model |
       | text-stream | ["chunkA" "chunkB" "chunkC"]   | echo  |
     When the ACP client sends request 20:
