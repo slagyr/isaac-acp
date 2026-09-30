@@ -10,8 +10,9 @@ chapter only covers what's specific to the ACP surface itself.
 
 isaac-acp declares **no config schema of its own**. Every knob you'd reach
 for here is either a CLI flag on `isaac acp` or a config path owned by
-`isaac.agent` (crews, sessions, frequencies) — this chapter names those and
-points at `isaac.agent` rather than re-documenting them.
+`isaac.agent` (crews, sessions, frequencies — see `isaac.agent#frequencies`
+for the shape and matching rules) — this chapter names those and points at
+`isaac.agent` rather than re-documenting them.
 
 ## The ACP comm
 
@@ -54,11 +55,10 @@ sending what you expect.
 **What it is.** `isaac acp` attaches to exactly **one** resolved session for
 the life of the process — there's no equivalent of hail's `--reach` to
 address other sessions mid-run. Selection uses the same shared
-session-frequencies flags the `prompt` command uses: `--session`/`-s`
-(exact id), `--crew`/`-c`, `--session-tag`/`--tag` (repeatable, ANDed),
-`--resume`/`-R` (most recent session overall), and `--prefer` (`recent` or
-`oldest` among ties). `--create` (`never`, `if-missing`, `always`) controls
-whether a miss creates a session; the built-in default is `if-missing`.
+session-frequencies flags the `prompt` command uses (`--session`/`-s`,
+`--crew`/`-c`, `--session-tag`/`--tag`, `--resume`/`-R`, `--prefer`,
+`--create`) — see `isaac.agent#frequencies` for what each one means and how
+matching/creation resolve; the built-in `--create` default is `if-missing`.
 `--session` combined with any other selection flag, or `--resume` combined
 with any selection flag, is a usage error reported before anything runs.
 
