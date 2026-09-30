@@ -1,25 +1,25 @@
 (ns isaac.comm.acp.server
   (:require
-    [isaac.bridge.cancellation :as bridge-cancel]
-    [isaac.bridge.core :as bridge]
-    [isaac.cli.host :as host]
+    [isaac.agent.bridge.cancellation :as bridge-cancel]
+    [isaac.agent.bridge.core :as bridge]
+    [isaac.foundation.cli.host :as host]
     [isaac.comm.acp :as acp-comm]
-    [isaac.config.defaults :as defaults]
-    [isaac.config.loader :as config]
-    [isaac.config.resolve :as config-resolve]
-    [isaac.config.root :as root]
-    [isaac.drive.turn :as single-turn]
-    [isaac.llm.api.protocol :as llm-api]
-    [isaac.logger :as log]
+    [isaac.agent.config.defaults :as defaults]
+    [isaac.foundation.config.loader :as config]
+    [isaac.agent.config.resolve :as config-resolve]
+    [isaac.foundation.config.root :as root]
+    [isaac.agent.drive.turn :as single-turn]
+    [isaac.agent.llm.api.protocol :as llm-api]
+    [isaac.foundation.logger :as log]
     [isaac.http.routes]
-    [isaac.session.policy :as policy]
-    [isaac.session.store.spi :as store]
-    [isaac.session.transcript :as message-content]
-    [isaac.slash.registry :as slash-registry]
-    [isaac.system :as system]
-    [isaac.tool.memory :as memory]
-    [isaac.util.jsonrpc :as dispatch]
-    [isaac.util.jsonrpc :as jrpc])
+    [isaac.agent.session.policy :as policy]
+    [isaac.agent.session.store.spi :as store]
+    [isaac.agent.session.transcript :as message-content]
+    [isaac.agent.slash.registry :as slash-registry]
+    [isaac.comm.acp.system :as system]
+    [isaac.agent.tool.memory :as memory]
+    [isaac.agent.util.jsonrpc :as dispatch]
+    [isaac.agent.util.jsonrpc :as jrpc])
   (:import
     (java.time ZoneOffset ZonedDateTime)
     (java.time.format DateTimeFormatter)
@@ -92,7 +92,7 @@
 (defn- open-for-crew!
   "Open session-id under crew-id via the policy SPI, catching a refusal
    (episodes/chronicle both throw on a cross-crew id collision — see
-   isaac.session.policy/SessionPolicy's open-session! docstring) so the ACP
+   isaac.agent.session.policy/SessionPolicy's open-session! docstring) so the ACP
    layer can turn it into a JSON-RPC error instead of an uncaught exception."
   [sess session-id crew-id session-store]
   (try

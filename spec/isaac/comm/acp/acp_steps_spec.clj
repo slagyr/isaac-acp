@@ -2,7 +2,7 @@
   (:require
     [gherclj.core :as g]
     [isaac.comm.acp.acp-steps :as steps]
-    [isaac.llm.api.grover :as grover]
+    [isaac.agent.llm.api.grover :as grover]
     [speclj.core :refer :all]))
 
 (def ^:private async-prompt-table
@@ -13,7 +13,7 @@
              ["params.prompt[0].text" "Long task"]]})
 
 (defn- delay-started-atom []
-  @(ns-resolve 'isaac.llm.api.grover 'delay-started*))
+  @(ns-resolve 'isaac.agent.llm.api.grover 'delay-started*))
 
 (defn- stub-blocking-dispatch! [release]
   (g/assoc! :acp-dispatch-fn (fn [_]

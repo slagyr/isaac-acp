@@ -2,13 +2,13 @@
   (:require
     [cheshire.core :as json]
     [clojure.string :as str]
-    [isaac.comm.protocol :as comm]
-    [isaac.comm.render :as render]
+    [isaac.agent.comm.protocol :as comm]
+    [isaac.agent.comm.render :as render]
     [isaac.comm.acp :as sut]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
-    [isaac.fs :as fs]
-    [isaac.logger :as log]
-    [isaac.system :as system]
+    [isaac.foundation.fs :as fs]
+    [isaac.foundation.logger :as log]
+    [isaac.comm.acp.system :as system]
     [speclj.core :refer :all])
   (:import (java.io StringWriter)))
 

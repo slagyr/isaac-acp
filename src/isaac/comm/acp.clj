@@ -1,10 +1,10 @@
 (ns isaac.comm.acp
   (:require
     [isaac.comm.acp.jsonrpc :as jsonrpc]
-    [isaac.comm.protocol :as comm]
-    [isaac.comm.render :as render]
-    [isaac.logger :as log]
-    [isaac.util.jsonrpc :as jrpc]))
+    [isaac.agent.comm.protocol :as comm]
+    [isaac.agent.comm.render :as render]
+    [isaac.foundation.logger :as log]
+    [isaac.agent.util.jsonrpc :as jrpc]))
 
 (defn- write! [output-writer message]
   (jrpc/write-message! output-writer message))

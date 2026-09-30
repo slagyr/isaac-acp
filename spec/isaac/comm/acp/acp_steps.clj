@@ -8,18 +8,18 @@
     [clojure.java.io :as io]
     [clojure.string :as str]
     [gherclj.core :as g :refer [defgiven defthen defwhen helper!]]
-    [isaac.cli.registry :as cli-registry]
+    [isaac.foundation.cli.registry :as cli-registry]
     [isaac.comm.acp.cli :as acp-cli]
     [isaac.comm.acp.server :as acp-server]
-    [isaac.config.loader :as config]
+    [isaac.foundation.config.loader :as config]
     [isaac.foundation.cli-steps :as cli-steps]
-    [isaac.fs :as fs]
-    [isaac.llm.api.grover :as grover]
-    [isaac.llm.http :as llm-http]
-    [isaac.nexus :as nexus]
-    [isaac.session.policy.episodes]
-    [isaac.step-tables :as match]
-    [isaac.util.jsonrpc :as dispatch]))
+    [isaac.foundation.fs :as fs]
+    [isaac.agent.llm.api.grover :as grover]
+    [isaac.agent.llm.http :as llm-http]
+    [isaac.foundation.nexus :as nexus]
+    [isaac.session.episodes.policy]
+    [isaac.agent.step-tables :as match]
+    [isaac.agent.util.jsonrpc :as dispatch]))
 
 (helper! isaac.comm.acp.acp-steps)
 
@@ -60,12 +60,12 @@
 (def ^:private await-timeout-ms 3000)
 
 (defn- delay-enabled? []
-  (when-let [v (ns-resolve 'isaac.llm.api.grover 'delay-enabled*)]
+  (when-let [v (ns-resolve 'isaac.agent.llm.api.grover 'delay-enabled*)]
     (when-let [a (deref v)]
       (boolean (deref a)))))
 
 (defn- delay-started-promise []
-  (when-let [v (ns-resolve 'isaac.llm.api.grover 'delay-started*)]
+  (when-let [v (ns-resolve 'isaac.agent.llm.api.grover 'delay-started*)]
     (when-let [a (deref v)]
       (deref a))))
 
@@ -496,7 +496,7 @@
 
 (defn workspace-has-soul-md
   "Writes SOUL.md under the crew workspace dir resolved by
-   isaac.config.loader/resolve-workspace (prefers <root>/crew/<id>/)."
+   isaac.foundation.config.loader/resolve-workspace (prefers <root>/crew/<id>/)."
   [crew-id home doc-string]
   (let [root    (or (g/get :root) (isaac-home-root home))
         ws-dir  (str root "/crew/" crew-id)

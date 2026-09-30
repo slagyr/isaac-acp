@@ -3,20 +3,20 @@
   (:require
     [cheshire.core :as json]
     [clojure.tools.cli :as tools-cli]
-    [isaac.cli.api :as cli-api]
-    [isaac.cli.host :as host]
-    [isaac.cli.registry :as registry]
+    [isaac.foundation.cli.api :as cli-api]
+    [isaac.foundation.cli.host :as host]
+    [isaac.foundation.cli.registry :as registry]
     [isaac.comm.acp.server :as server]
-    [isaac.config.defaults :as defaults]
-    [isaac.config.loader :as config]
-    [isaac.config.resolve :as config-resolve]
-    [isaac.nexus :as nexus]
-    [isaac.session.frequencies :as frequencies]
-    [isaac.session.frequencies-cli :as frequencies-cli]
-    [isaac.session.store.spi :as store]
-    [isaac.tool.builtin :as builtin]
-    [isaac.util.jsonrpc :as dispatch]
-    [isaac.util.jsonrpc :as jrpc]))
+    [isaac.agent.config.defaults :as defaults]
+    [isaac.foundation.config.loader :as config]
+    [isaac.agent.config.resolve :as config-resolve]
+    [isaac.foundation.nexus :as nexus]
+    [isaac.agent.frequencies :as frequencies]
+    [isaac.agent.frequencies-cli :as frequencies-cli]
+    [isaac.agent.session.store.spi :as store]
+    [isaac.agent.tool.builtin :as builtin]
+    [isaac.agent.util.jsonrpc :as dispatch]
+    [isaac.agent.util.jsonrpc :as jrpc]))
 
 (def option-spec
   ;; Session selection (--session/--crew/--session-tag/--resume/--create/--prefer)
@@ -225,7 +225,7 @@
 (defn make-command
   "Factory used by the module loader's :cli extension kind. Returns the
    full command spec including :name; the loader registers it via
-   isaac.cli.registry/register-module-command!."
+   isaac.foundation.cli.registry/register-module-command!."
   []
   {:name        "acp"
    :usage       "acp [options]"

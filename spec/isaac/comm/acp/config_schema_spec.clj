@@ -1,4 +1,4 @@
-(ns isaac.config.schema-spec
+(ns isaac.comm.acp.config-schema-spec
   (:require
     [clojure.edn :as edn]
     [speclj.core :refer :all]))

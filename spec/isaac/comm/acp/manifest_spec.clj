@@ -1,12 +1,12 @@
-(ns isaac.manifest-spec
+(ns isaac.comm.acp.manifest-spec
   (:require
     [clojure.edn :as edn]
-    [isaac.cli.registry :as registry]
-    [isaac.comm.registry :as comm-registry]
-    [isaac.fs :as fs]
-    [isaac.module.loader :as module-loader]
+    [isaac.foundation.cli.registry :as registry]
+    [isaac.agent.comm.registry :as comm-registry]
+    [isaac.foundation.fs :as fs]
+    [isaac.foundation.module.loader :as module-loader]
     [isaac.http.routes :as routes]
-    [isaac.system :as system]
+    [isaac.comm.acp.system :as system]
     [speclj.core :refer :all]))
 
 (defn- manifest []

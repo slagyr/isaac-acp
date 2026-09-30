@@ -1,7 +1,7 @@
-(ns isaac.system
+(ns isaac.comm.acp.system
   (:refer-clojure :exclude [get get-in])
   (:require
-    [isaac.nexus :as nexus]))
+    [isaac.foundation.nexus :as nexus]))
 
 (defn get [k]
   (nexus/get k))

@@ -4,7 +4,7 @@
    and every `isaac <command>` invocation must name a registered top-level
    CLI command. isaac-acp is NOT a builtin module (isaac-vwa6 follow-up:
    :builtin? true was only ever added so this spec could see acp's own
-   :isaac/cli and :handbook via isaac.module.discovery/builtin-index, but
+   :isaac/cli and :handbook via isaac.foundation.module.discovery/builtin-index, but
    that flag also changes acp's runtime loading — a docs bean can't do
    that). So this reads acp's own manifest and chapter directly as
    classpath resources instead, and checks CLI commands against the union
@@ -14,12 +14,12 @@
   (:require
     [clojure.java.io :as io]
     [clojure.string :as str]
-    [isaac.config.schema-compose :as schema-compose]
-    [isaac.config.schema.resolve :as schema-resolve]
-    [isaac.fs :as fs]
-    [isaac.module.coords :as coords]
-    [isaac.module.discovery :as discovery]
-    [isaac.nexus :as nexus]
+    [isaac.foundation.config.schema-compose :as schema-compose]
+    [isaac.foundation.config.schema.resolve :as schema-resolve]
+    [isaac.foundation.fs :as fs]
+    [isaac.foundation.module.coords :as coords]
+    [isaac.foundation.module.discovery :as discovery]
+    [isaac.foundation.nexus :as nexus]
     [speclj.core :refer :all]))
 
 (def ^:private acp-module-id :isaac.comm.acp)
@@ -56,7 +56,7 @@
 (defn- index-cli-commands
   "Top-level command names contributed to the :isaac/cli berth by every
    module in `index` — read directly off each module's manifest rather
-   than through isaac.module.berths, whose report helpers vary across
+   than through isaac.foundation.module.berths, whose report helpers vary across
    pinned foundation shas."
   [index]
   (->> (vals index)
