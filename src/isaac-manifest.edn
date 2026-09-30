@@ -1,7 +1,9 @@
 {:id          :isaac.comm.acp
- :version     "0.1.16"
+ :version     "0.1.17"
+ :builtin?    true
  :factory     isaac.module.protocol/module
  :description "ACP (Agent Communication Protocol) for isaac — stdio agent surface only."
+ :handbook    "isaac/comm/acp/handbook.md"
 
  ;; CLI command contributed via the :isaac/cli berth, keyed by command
  ;; id (the name derives from the key). Symbols get requiring-resolve'd
