@@ -1,15 +1,3 @@
-<!--
-Lint convention (isaac.comm.acp.handbook-chapter-spec, isaac-vwa6, mirroring
-isaac.foundation's own and isaac-gmail's isaac-g8k2): a backtick
-`config:<dotted.path>` reference (no angle-bracket placeholder inside the
-path) is checked against the composed config schema, and the word right
-after `isaac ` in `isaac <command>` is checked against the registered
-top-level CLI commands. Keep both literal and real when you edit this file —
-the lint fails the build once either drifts from what Isaac actually
-exposes. `<placeholder>` shapes (e.g. `config:<dotted.path>` itself, or
-`<module-id>#<slug>`) are intentionally skipped.
--->
-
 # isaac.comm.acp — ACP comm
 
 You are a crew running inside Isaac. This chapter covers **isaac-acp**: the

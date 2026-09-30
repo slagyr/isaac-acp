@@ -1,4 +1,4 @@
-{:paths ["src" "spec"]
+{:paths ["src" "resources" "spec"]
 
  ;; Native babashka runners via isaac-foundation-test-support (isaac-x5ru / isaac-7ivl).
  ;; test-support SHA must be >= 43cf46e (bb.test-tasks under spec-support/src/bb/).

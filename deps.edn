@@ -1,4 +1,4 @@
-{:paths ["src"]
+{:paths ["src" "resources"]
 
  ;; ACP is a module (the :isaac/cli berth + comm impl). It depends on the
  ;; split platform repos — agent (runtime: bridge, drive, llm, sessions,
