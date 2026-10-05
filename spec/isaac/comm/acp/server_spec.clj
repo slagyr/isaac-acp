@@ -11,7 +11,6 @@
     [isaac.foundation.marigold :as marigold]
     [isaac.agent.marigold.agent :as marigold-agent]
     [isaac.foundation.module.loader :as module-loader]
-    [isaac.agent.session.policy :as policy]
     [isaac.agent.tool.builtin :as builtin]
     [isaac.agent.tool.exec :as exec]
     [isaac.agent.tool.file :as file]

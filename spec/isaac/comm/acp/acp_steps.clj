@@ -17,7 +17,8 @@
     [isaac.agent.llm.api.grover :as grover]
     [isaac.agent.llm.http :as llm-http]
     [isaac.foundation.nexus :as nexus]
-    [isaac.session.episodes.policy]
+    [isaac.session.episodes.context]
+    [isaac.session.episodes.observer]
     [isaac.agent.step-tables :as match]
     [isaac.agent.util.jsonrpc :as dispatch]))
 

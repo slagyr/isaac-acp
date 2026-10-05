@@ -12,7 +12,6 @@
     [isaac.agent.llm.api.protocol :as llm-api]
     [isaac.foundation.logger :as log]
     [isaac.http.routes]
-    [isaac.agent.session.policy :as policy]
     [isaac.agent.session.store.spi :as store]
     [isaac.agent.session.transcript :as message-content]
     [isaac.agent.slash.registry :as slash-registry]
@@ -57,7 +56,7 @@
 
 (defn- mint-session-id
   "A fresh session id for session/new without an explicit name. Never call
-   policy/open-session! with a nil/blank name (isaac-j95x): every SPI
+   store/open-session! with a nil/blank name (isaac-j95x): every SPI
    implementation refuses it rather than silently degrading it into a
    collision with an unrelated session."
   []
@@ -77,39 +76,32 @@
 (defn- ambient-cfg []
   (or (config/snapshot "ACP ambient config") {}))
 
-(defn- crew-policy [crew-id cfg session-store]
-  (policy/for-crew crew-id cfg session-store))
-
-(defn- open-acp-session! [sess session-id crew-id session-store]
-  (policy/open-session! sess session-id
-                        {:crew          crew-id
-                         :channel       "acp"
-                         :chat-type     "direct"
-                         :origin        {:kind :acp}
-                         :cwd           (host/cwd)
-                         :session-store session-store}))
+(defn- open-acp-session! [session-id crew-id session-store]
+  (store/open-session! session-store session-id
+                       {:crew      crew-id
+                        :channel   "acp"
+                        :chat-type "direct"
+                        :origin    {:kind :acp}
+                        :cwd       (host/cwd)}))
 
 (defn- open-for-crew!
-  "Open session-id under crew-id via the policy SPI, catching a refusal
-   (episodes/chronicle both throw on a cross-crew id collision — see
-   isaac.agent.session.policy/SessionPolicy's open-session! docstring) so the ACP
-   layer can turn it into a JSON-RPC error instead of an uncaught exception."
-  [sess session-id crew-id session-store]
+  "Open session-id under crew-id via the session store, catching a refusal
+   (cross-crew id collision) so the ACP layer can turn it into a JSON-RPC
+   error instead of an uncaught exception."
+  [session-id crew-id session-store]
   (try
-    {:session (open-acp-session! sess session-id crew-id session-store)}
+    {:session (open-acp-session! session-id crew-id session-store)}
     (catch Exception e
       {:refused (or (ex-message e) "session open refused")})))
 
-(defn- session-new-handler [crew-id cfg params message]
-  (let [session-store (session-store)
-        cfg           (or cfg (ambient-cfg) {})
-        sess          (crew-policy crew-id cfg session-store)]
+(defn- session-new-handler [crew-id params message]
+  (let [session-store (session-store)]
     (if-let [existing-session (when-let [session-name (:name params)]
-                                (policy/get-session sess session-name))]
+                                (store/get-session session-store session-name))]
       (duplicate-session-response message (:id existing-session))
       (let [session-id  (or (:name params)
                             (mint-session-id))
-            {:keys [session refused]} (open-for-crew! sess session-id crew-id session-store)
+            {:keys [session refused]} (open-for-crew! session-id crew-id session-store)
             opened-crew (crew-str (:crew session))
             want-crew   (crew-str crew-id)]
         (cond
@@ -225,13 +217,10 @@
 
 (defn attach-session-result! [output-writer session-key]
   (let [session-store (session-store)
-        cfg           (ambient-cfg)
-        session       (store/get-session session-store session-key)
-        crew-id       (or (:crew session) (get-in cfg [:defaults :frequencies :crew]))
-        sess          (crew-policy crew-id cfg session-store)]
+        session       (store/get-session session-store session-key)]
     (if session
       (do
-        (replay-transcript! output-writer (:id session) (policy/active-transcript sess (:id session)))
+        (replay-transcript! output-writer (:id session) (store/active-transcript session-store (:id session)))
         {:sessionId (:id session)})
       (throw (invalid-params (str "session not found: " session-key))))))
 
@@ -315,7 +304,7 @@
         crew-id (or crew-id (get-in cfg [:defaults :frequencies :crew]))
         opts {:crew-members crew-members :models models :provider-configs provider-configs :cfg cfg :home home :crew-id crew-id :model-override model-override}]
     {"initialize"      (partial initialize-handler opts)
-     "session/new"     (partial session-new-handler crew-id cfg)
+     "session/new"     (partial session-new-handler crew-id)
      "session/load"    (partial session-load-handler output-writer crew-id)
      "session/prompt"  (partial session-prompt-handler output-writer crew-members models provider-configs cfg home model-override crew-id)
      "session/cancel"  session-cancel-handler}))
