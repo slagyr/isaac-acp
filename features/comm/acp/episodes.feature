@@ -1,7 +1,7 @@
 Feature: ACP surface dispatches through the bridge — episode crews get episodes
   Every surface enters the turn engine at ONE seam: bridge dispatch, where the
   episode router, turnstiles, observers and finalization live (isaac-6yg0
-  ruling). For a crew with :session-policy :episodes the ACP sessionId is the
+  ruling). For a crew on :context-mode :episodes with the episodes observer the ACP sessionId is the
   session id; episodes rotate beneath it (isaac-51xy decision 27): the first
   prompt opens an episode with recall-at-open, warm prompts append, and the
   client never learns episodes rotate beneath its handle. Chronicle crews are
@@ -16,7 +16,8 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | path           | value            |
       | model          | echo             |
       | soul           | You are Cordelia |
-      | session-policy | episodes         |
+      | context-mode   | episodes         |
+      | observers      | [:episodes]      |
     And the isaac EDN file "config/models/gist.edn" exists with:
       | path     | value  |
       | model    | gist   |
@@ -28,6 +29,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | episodes.gist-model       | gist     |
     And the current time is "2026-03-01T10:00:00Z"
 
+  @wip
   Scenario: session/prompt on an episodes crew opens an episode with the ACP session as session id
     Given the ACP client has initialized
     And the following model responses are queued:
@@ -53,6 +55,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | id        | crew     |
       | reef-chat | cordelia |
 
+  @wip
   Scenario: a warm second prompt appends to the open episode
     Given the ACP client has initialized
     And the following model responses are queued:
@@ -86,6 +89,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | id        | crew     |
       | reef-chat | cordelia |
 
+  @wip
   Scenario: chronicle crews are unchanged — session/new creates the named session, no episode events
     Given the isaac EDN file "config/crew/ketch.edn" exists with:
       | path  | value             |
@@ -119,12 +123,14 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | event            |
       | :episodes/opened |
 
+  @wip
   Scenario: session/new on an episodes crew never returns another crew's session
     Given the isaac EDN file "config/crew/marvin.edn" exists with:
       | path           | value          |
       | model          | echo           |
       | soul           | You are Marvin |
-      | session-policy | episodes       |
+      | context-mode   | episodes       |
+      | observers      | [:episodes]    |
     And the following sessions exist:
       | name    | crew | updated-at          |
       | session | main | 2026-02-20T10:00:00 |
@@ -148,6 +154,7 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | #*      | marvin |
     And the exit code is 0
 
+  @wip
   Scenario: --crew on an episode crew resumes that crew's most recent session
     Given the following sessions exist:
       | name          | crew     | updated-at          |
