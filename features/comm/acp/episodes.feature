@@ -49,8 +49,8 @@ Feature: ACP surface dispatches through the bridge — episode crews get episode
       | key               | value    |
       | result.stopReason | end_turn |
     And the log has entries matching:
-      | event            | crew     | session-id | episode  |
-      | :episodes/opened | cordelia | reef-chat  | #"\d{17}" |
+      | event            | crew     | thread    | episode   |
+      | :episodes/opened | cordelia | reef-chat | #"\d{17}" |
     And the following sessions match:
       | id        | crew     |
       | reef-chat | cordelia |
