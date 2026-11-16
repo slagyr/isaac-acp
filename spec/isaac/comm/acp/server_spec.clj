@@ -4,6 +4,7 @@
     [clojure.string :as str]
     [isaac.agent.util.jsonrpc :as jrpc]
     [isaac.agent.comm.registry :as comm-registry]
+    [isaac.agent.slash.registry :as slash-registry]
     [isaac.agent.comm.protocol :as comm]
     [isaac.comm.acp.server :as sut]
     [isaac.foundation.config.loader :as config]
@@ -50,7 +51,7 @@
   #_{:clj-kondo/ignore [:unresolved-symbol]}
   (around [example]
     (session-helper/with-memory-store
-      (system/with-nested-system {:state-dir test-dir :fs (fs/mem-fs)}
+      (system/with-nested-system {:state-dir test-dir :root test-dir :fs (fs/mem-fs)}
         (config/set-snapshot! prompt-snapshot "ACP server-spec isolate snapshot")
         (grover/install-test-fixture!)
         (example))))
@@ -188,18 +189,15 @@
         (should= session-id (:id (first sessions)))))
 
     (it "advertises available slash commands after session creation"
-      (let [result       (sut/dispatch-line {:state-dir test-dir}
-                                            (jrpc/request-line 2 "session/new" {:name "cmd-test"}))
-            session-id   (get-in result [:response :result :sessionId])
+      (let [commands [{:name "bearing" :description "Find bearing"}]
+            result (with-redefs [slash-registry/all-commands (fn [& _] commands)]
+                     (sut/dispatch-line {:state-dir test-dir}
+                                        (jrpc/request-line 2 "session/new" {:name "cmd-test"})))
             notification (first (:notifications result))]
-        (should= "cmd-test" session-id)
+        (should= "cmd-test" (get-in result [:response :result :sessionId]))
         (should= "session/update" (:method notification))
         (should= "available_commands_update" (get-in notification [:params :update :sessionUpdate]))
-        ;; The advertised names are whatever the active manifest declares.
-        ;; Under marigold this is the themed test set; in production it's the
-        ;; built-in slash catalog. Test asserts the mechanism, not specifics.
-        (should= (sort [marigold/heading-command marigold/bearing-command marigold/muster-command])
-                 (sort (mapv :name (get-in notification [:params :update :availableCommands]))))))
+        (should= commands (get-in notification [:params :update :availableCommands]))))
 
     (it "stores acp origin on sessions created through session/new"
       (let [response   (sut/dispatch-line {:state-dir test-dir}
@@ -374,6 +372,7 @@
         (should= "end_turn" (get-in response [:result :stopReason]))))
 
     (it "stores user and assistant messages in the transcript"
+      (config/set-snapshot! prompt-snapshot "ACP prompt fixture")
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
       (grover/enqueue! [{:type "text" :content "Four, I think" :model "echo"}])
       (sut/dispatch-line (assoc prompt-opts :output-writer (StringWriter.))
@@ -401,6 +400,7 @@
           (should= "end_turn" (get-in response [:result :stopReason])))))
 
     (it "stores model and provider in the assistant message"
+      (config/set-snapshot! prompt-snapshot "ACP prompt fixture")
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
       (grover/enqueue! [{:type "text" :content "Hello" :model "echo"}])
       (sut/dispatch-line (assoc prompt-opts :output-writer (StringWriter.))
@@ -413,6 +413,7 @@
         (should= "grover" (get-in assistant [:message :provider]))))
 
     (it "writes the streamed text as an ACP session/update notification"
+      (config/set-snapshot! prompt-snapshot "ACP prompt fixture")
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
       (grover/enqueue! [{:type "text" :content "Once upon a time..." :model "echo"}])
       (let [writer        (StringWriter.)
@@ -429,8 +430,8 @@
                                        last)
                                   [:message :content])]
         (should= "end_turn" (get-in result [:result :stopReason]))
-        (should= ["agent_message_chunk"] update-kinds)
-        (should= ["Once upon a time..."] update-texts)
+        (should= ["user_message_chunk" "agent_message_chunk"] update-kinds)
+        (should= ["Tell me a story" "Once upon a time..."] update-texts)
         (should= "Once upon a time..." assistant-msg)))
 
     (it "writes tool_call pending and tool_call_update completed notifications"
@@ -484,6 +485,11 @@
       (let [codex-agents {"main" {:name "main" :soul "Lives in a trash can." :model "snuffy" :tools {:allow ["read"]}}}
             codex-models {"snuffy" {:alias "snuffy" :model "snuffy-codex" :provider (str marigold/grover-api ":" marigold/quantum-anvil) :context-window 128000}}
             lid-file     (str test-dir "/trash-lid.txt")]
+        (config/set-snapshot! {:defaults {:frequencies {:crew "main"} :crew {:model "snuffy"}}
+                               :crew codex-agents :models codex-models
+                               :providers {(str marigold/grover-api ":" marigold/quantum-anvil)
+                                           {:api marigold/grover-api :auth "none"}}}
+                              "ACP codex fixture")
         (let [fs* (system/get :fs)]
           (fs/mkdirs fs* test-dir)
           (fs/spit fs* lid-file "Old newspaper and a banana peel."))
