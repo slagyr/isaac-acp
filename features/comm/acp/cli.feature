@@ -252,3 +252,21 @@ Feature: ACP command
     When isaac is run with "acp --session soul-default-test"
     Then the stdout contains "\"stopReason\":\"end_turn\""
     And the exit code is 0
+
+  @wip
+  Scenario: a blank line in the input gets no response (isaac-2z7z)
+    Blank lines are not requests. Over remote /cli every line arrived followed
+    by one (isaac-cli-server appends a newline the proxy already sent), so Toad
+    saw Invalid Request with id null.
+    Given stdin is:
+      """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+
+      {"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp/test"}}
+
+      """
+    When isaac is run with "acp"
+    Then the stdout contains "protocolVersion"
+    And the stdout contains "sessionId"
+    And the stdout does not contain "Invalid Request"
+    And the exit code is 0
