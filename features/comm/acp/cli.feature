@@ -253,7 +253,6 @@ Feature: ACP command
     Then the stdout contains "\"stopReason\":\"end_turn\""
     And the exit code is 0
 
-  @wip
   Scenario: a blank line in the input gets no response (isaac-2z7z)
     Blank lines are not requests. Over remote /cli every line arrived followed
     by one (isaac-cli-server appends a newline the proxy already sent), so Toad

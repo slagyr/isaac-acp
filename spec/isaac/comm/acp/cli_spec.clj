@@ -248,6 +248,16 @@
         (run-with-stdin "{}\n{}\n" base-opts)
         (should= 2 @call-count))))
 
+  (it "ignores empty and whitespace-only lines between requests"
+    (let [lines (atom [])]
+      (with-redefs [dispatch/handle-line (fn [_ line]
+                                          (swap! lines conj line)
+                                          (jrpc/result (count @lines) {}))]
+        (let [{:keys [messages exit]} (run-with-stdin "{}\n\n \t \n{}\n" base-opts)]
+          (should= 0 exit)
+          (should= ["{}" "{}"] @lines)
+          (should= [1 2] (mapv :id messages))))))
+
   (it "skips nil responses (notifications with no response)"
     (with-redefs [dispatch/handle-line (fn [_ _] nil)]
       (let [{:keys [output exit]} (run-with-stdin "{}\n" base-opts)]

@@ -2,6 +2,7 @@
 (ns isaac.comm.acp.cli
   (:require
     [cheshire.core :as json]
+    [clojure.string :as str]
     [clojure.tools.cli :as tools-cli]
     [isaac.foundation.cli.api :as cli-api]
     [isaac.foundation.cli.host :as host]
@@ -122,11 +123,12 @@
   (let [reader (java.io.BufferedReader. (host/in))]
     (loop []
       (when-let [line (.readLine reader)]
-        (when *verbose-methods?*
-          (when-let [method (:method (try (json/parse-string line true) (catch Exception _ nil)))]
-            (binding [*out* *err*]
-              (println method))))
-        (write-result! (dispatch/handle-line handlers line))
+        (when-not (str/blank? line)
+          (when *verbose-methods?*
+            (when-let [method (:method (try (json/parse-string line true) (catch Exception _ nil)))]
+              (binding [*out* *err*]
+                (println method))))
+          (write-result! (dispatch/handle-line handlers line)))
         (recur)))))
 
 (defn- run-loop-verbose [handlers]
