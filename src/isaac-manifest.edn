@@ -1,5 +1,5 @@
 {:id          :isaac.comm.acp
- :version     "0.1.17"
+ :version     "0.1.18"
  :factory     isaac.foundation.module.protocol/module
  :description "ACP (Agent Communication Protocol) for isaac — stdio agent surface only."
  :handbook    "isaac/comm/acp/handbook.md"
