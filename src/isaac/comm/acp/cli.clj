@@ -173,7 +173,8 @@
 
         :else
         ;; Attach session/new to the single resolver target.
-        (let [cfg          (or (config/snapshot "ACP CLI attach") {})
+        (let [attached-ids (atom #{})
+              cfg          (or (config/snapshot "ACP CLI attach") {})
               crew-id      (or (:with-crew override) (:crew (:create-identity target))
                                (:crew (:session target)) (:crew opts) (defaults/crew-id cfg))
               attach-key   (when (and (not (:create? target)) (:session-key target)
@@ -185,16 +186,29 @@
                              (assoc :crew-id crew-id))
               handlers     (cond-> (server/handlers server-opts')
                              attach-key (attach-session-handler (:output-writer server-opts') attach-key)
-                             (:create? target) (create-once-handler (:output-writer server-opts')))]
+                             (:create? target) (create-once-handler (:output-writer server-opts')))
+              handlers     (update handlers "session/new"
+                                   (fn [handler]
+                                     (fn [params message]
+                                       (let [result (handler params message)]
+                                         (when-let [id (or (get-in result [:result :sessionId])
+                                                           (get-in result [:response :result :sessionId]))]
+                                           (swap! attached-ids conj id))
+                                         result))))]
           (host/ensure-runtime! {:install! builtin/register-all!})
           (print-error! "isaac acp ready")
           (try
-            (if (:verbose opts)
-              (run-loop-verbose handlers)
-              (run-loop handlers))
+            (with-redefs [server/attach-live-session! (let [attach! server/attach-live-session!]
+                                                        (fn [writer id]
+                                                          (let [channel (attach! writer id)]
+                                                            (swap! attached-ids conj id)
+                                                            channel)))]
+              (if (:verbose opts)
+                (run-loop-verbose handlers)
+                (run-loop handlers)))
             (finally
-              (when attach-key
-                (server/detach-live-session! (:output-writer server-opts') attach-key))))
+              (doseq [id @attached-ids]
+                (server/detach-live-session! (:output-writer server-opts') id))))
           0)))))
 
 (defn run [opts]

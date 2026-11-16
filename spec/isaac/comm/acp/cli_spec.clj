@@ -5,6 +5,7 @@
     [clojure.string :as str]
     [gherclj.core :as g]
     [isaac.comm.acp.acp-steps :as acp-steps]
+    [isaac.comm.acp.server :as acp-server]
     [isaac.foundation.cli.host :as host]
     [isaac.foundation.cli.registry :as registry]
     [isaac.comm.acp.cli :as sut]
@@ -419,4 +420,32 @@
                                        :env  {}}))
         (should (str/includes? (str err) "initialize"))))
     )
+  )
+
+(describe "ACP stdio attachment lifecycle"
+  (around [it]
+    (system/with-system {:config (atom nil)}
+      (session-helper/with-memory-store
+        (mem-run it))))
+
+  (it "detaches every session loaded over stdio when the client exits"
+    (let [first-session "first-loaded"
+          next-session "next-loaded"
+          state-dir (str "/test/acp-loaded-" (random-uuid))
+          detached (atom [])]
+      (doseq [id [first-session next-session]] (session-helper/create-session! state-dir id))
+      (with-redefs [acp-server/detach-live-session! (fn [_ id] (swap! detached conj id))]
+        (should= 0 (:exit (run-with-stdin (str (jrpc/request-line 2 "session/load" {:sessionId first-session}) "\n"
+                                                 (jrpc/request-line 3 "session/load" {:sessionId next-session}))
+                                          (assoc base-opts :state-dir state-dir)))))
+      (should= #{first-session next-session} (set @detached))))
+
+  (it "detaches a session created over stdio when the client exits"
+    (let [state-dir (str "/test/acp-created-" (random-uuid))
+          detached (atom [])]
+      (with-redefs [acp-server/detach-live-session! (fn [_ id] (swap! detached conj id))]
+        (should= 0 (:exit (run-with-stdin (jrpc/request-line 2 "session/new" {:name "new-client-session"})
+                                          (assoc base-opts :state-dir state-dir)))))
+      (should= ["new-client-session"] @detached)))
+
   )
