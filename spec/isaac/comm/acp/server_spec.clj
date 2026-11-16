@@ -3,6 +3,8 @@
     [cheshire.core :as json]
     [clojure.string :as str]
     [isaac.agent.util.jsonrpc :as jrpc]
+    [isaac.agent.comm.registry :as comm-registry]
+    [isaac.agent.comm.protocol :as comm]
     [isaac.comm.acp.server :as sut]
     [isaac.foundation.config.loader :as config]
     [isaac.agent.config.resolve :as config-resolve]
@@ -780,3 +782,17 @@
   )
 
 )
+
+(describe "background turn attachments"
+  (it "streams only a turn without its own comm to the attached session"
+    (let [writer (StringWriter.)
+          background (comm-registry/attached-comm "scout")]
+      (should-be-nil background)
+      (sut/attach-live-session! writer "scout")
+      (let [background (comm-registry/attached-comm "scout")]
+        (comm/on-turn-start background "scout" "Three moorings.")
+        (comm/on-chatter background "scout" nil "Aye.")
+        (should= ["user_message_chunk" "agent_message_chunk"]
+                 (mapv #(get-in % [:params :update :sessionUpdate]) (parsed-output writer))))
+      (sut/detach-live-session! writer "scout")
+      (should-be-nil (comm-registry/attached-comm "scout")))))

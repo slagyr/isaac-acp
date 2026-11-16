@@ -2,6 +2,7 @@
   (:require
     [isaac.agent.bridge.cancellation :as bridge-cancel]
     [isaac.agent.bridge.core :as bridge]
+    [isaac.agent.comm.registry :as comm-registry]
     [isaac.foundation.cli.host :as host]
     [isaac.comm.acp :as acp-comm]
     [isaac.agent.config.defaults :as defaults]
@@ -215,12 +216,21 @@
       (doseq [entry transcript]
         (replay-transcript-entry! output-writer session-id tool-results entry)))))
 
+(defn attach-live-session! [output-writer session-id]
+  (comm-registry/attach-session! session-id (acp-comm/background-channel output-writer)))
+
+(defn detach-live-session! [output-writer session-id]
+  (when-let [channel (comm-registry/attached-comm session-id)]
+    (when (identical? output-writer (acp-comm/writer channel))
+      (comm-registry/detach-session! session-id channel))))
+
 (defn attach-session-result! [output-writer session-key]
   (let [session-store (session-store)
         session       (store/get-session session-store session-key)]
     (if session
       (do
         (replay-transcript! output-writer (:id session) (store/active-transcript session-store (:id session)))
+        (attach-live-session! output-writer (:id session))
         {:sessionId (:id session)})
       (throw (invalid-params (str "session not found: " session-key))))))
 
@@ -291,6 +301,7 @@
       (throw (invalid-params "sessionId is required")))
     (when (nil? text)
       (throw (invalid-params "Invalid params: no text in prompt")))
+    (attach-live-session! output-writer session-id)
     (run-prompt output-writer session-id text {:config         effective-cfg
                                                :home           home
                                                :state-dir      (root/current-root)

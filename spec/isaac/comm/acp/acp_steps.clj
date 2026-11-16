@@ -10,7 +10,7 @@
     [gherclj.core :as g :refer [defgiven defthen defwhen helper!]]
     [isaac.foundation.cli.registry :as cli-registry]
     [isaac.comm.acp.cli :as acp-cli]
-    [isaac.comm.acp.server :as acp-server]
+        [isaac.comm.acp.server :as acp-server]
     [isaac.foundation.config.loader :as config]
     [isaac.foundation.cli-steps :as cli-steps]
     [isaac.foundation.fs :as fs]
@@ -109,7 +109,8 @@
     (future-cancel turn*))
   (g/dissoc! :acp-turn-future)
   (g/dissoc! :live-output-writer)
-  (g/dissoc! :acp-output-offset))
+  (g/dissoc! :acp-output-offset)
+  (g/dissoc! :acp-writer))
 
 (g/after-scenario close-acp-state!)
 
@@ -177,9 +178,11 @@
     (.put (outgoing-queue) message)))
 
 (defn- enqueue-output-lines! [writer]
-  (doseq [line (->> (str/split-lines (str writer))
-                    (remove str/blank?))]
-    (enqueue-outgoing! (json/parse-string line true))))
+  (let [lines (->> (str/split-lines (str writer)) (remove str/blank?) vec)
+        offset (or (g/get :acp-output-offset) 0)]
+    (doseq [line (drop offset lines)]
+      (enqueue-outgoing! (json/parse-string line true)))
+    (g/assoc! :acp-output-offset (count lines))))
 
 (defn- record-dispatch-result! [result]
   (cond
@@ -203,7 +206,10 @@
 (defn- dispatch-result [line]
   (let [state-dir        (effective-state-dir)
         mem-fs           (g/get :mem-fs)
-        live-writer      (when state-dir (StringWriter.))
+        live-writer      (when state-dir (or (g/get :acp-writer)
+                                             (let [writer (StringWriter.)]
+                                               (g/assoc! :acp-writer writer)
+                                               writer)))
         llm-http-stub    (g/get :llm-http-stub)
         custom-fn        (g/get :acp-dispatch-fn)
         fallback-fn      (fn [input-line]
@@ -254,7 +260,7 @@
       (let [turn* (future
                     (when (and state-dir live-writer)
                       (g/assoc! :live-output-writer live-writer)
-                      (g/assoc! :acp-output-offset 0))
+                      (g/assoc! :acp-output-offset (or (g/get :acp-output-offset) 0)))
                     (try
                       (run!)
                       (finally
@@ -306,7 +312,7 @@
           (.put queue m))))))
 
 (defn- output-messages []
-  (let [output (if-let [writer (g/get :live-output-writer)] (str writer) (g/get :output))]
+  (let [output (if-let [writer (or (g/get :live-output-writer) (g/get :acp-writer))] (str writer) (g/get :output))]
     (->> (str/split-lines (or output ""))
          (remove str/blank?)
          (mapv #(json/parse-string % true)))))

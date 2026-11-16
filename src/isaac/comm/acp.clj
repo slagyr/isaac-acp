@@ -167,7 +167,9 @@
 (extend AcpComm
   comm/Comm
   (merge comm/defaults
-         {:on-chatter     on-chatter*
+         {:on-turn-start  (fn [this session-key input]
+                            (write! (.-output-writer this) (user-text-notification session-key input)))
+          :on-chatter     on-chatter*
           :on-tool-call   on-tool-call*
           :on-tool-cancel on-tool-cancel*
           :on-tool-result on-tool-result*
@@ -176,6 +178,26 @@
 
 (defn make [host]
   (->AcpComm (:output-writer host)))
+
+(deftype BackgroundAcpComm [output-writer])
+
+(extend BackgroundAcpComm
+  comm/Comm
+  (merge comm/defaults
+         {:on-turn-start (fn [this session-key input]
+                           (write! (.-output-writer this) (user-text-notification session-key input)))
+          :on-chatter on-chatter*
+          :on-tool-call on-tool-call*
+          :on-tool-cancel on-tool-cancel*
+          :on-tool-result on-tool-result*
+          :on-bulletin on-bulletin*
+          :send! send!*}))
+
+(defn background-channel [output-writer]
+  (->BackgroundAcpComm output-writer))
+
+(defn writer [channel]
+  (.-output-writer channel))
 
 (defn channel [output-writer]
   (->AcpComm output-writer))

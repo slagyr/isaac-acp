@@ -1,4 +1,3 @@
-@wip
 Feature: Turns the ACP client didn't start
   While a client has a session attached, turns that run on that session
   without a session/prompt — subagent results, timers, hails — stream to the

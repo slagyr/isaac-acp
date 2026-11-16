@@ -7,7 +7,7 @@
     [isaac.foundation.cli.host :as host]
     [isaac.foundation.cli.registry :as registry]
     [isaac.comm.acp.server :as server]
-    [isaac.agent.config.defaults :as defaults]
+        [isaac.agent.config.defaults :as defaults]
     [isaac.foundation.config.loader :as config]
     [isaac.agent.config.resolve :as config-resolve]
     [isaac.foundation.nexus :as nexus]
@@ -188,9 +188,13 @@
                              (:create? target) (create-once-handler (:output-writer server-opts')))]
           (host/ensure-runtime! {:install! builtin/register-all!})
           (print-error! "isaac acp ready")
-          (if (:verbose opts)
-            (run-loop-verbose handlers)
-            (run-loop handlers))
+          (try
+            (if (:verbose opts)
+              (run-loop-verbose handlers)
+              (run-loop handlers))
+            (finally
+              (when attach-key
+                (server/detach-live-session! (:output-writer server-opts') attach-key))))
           0)))))
 
 (defn run [opts]
