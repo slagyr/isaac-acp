@@ -7,7 +7,7 @@
  :deps  {io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
                                             :git/sha "edc18481808a050f8c2fd657f2e966e6040fcfc3"}
          io.github.slagyr/isaac-agent      {:git/url "https://github.com/slagyr/isaac-agent.git"
-                                            :git/sha "00ad7845e9fc7b590b2b317029ff1072638228e2"}
+                                            :git/sha "12eb0d9dff5330060a0d04d63a1649ee3fdd805d"}
          io.github.slagyr/isaac-http     {:git/url "https://github.com/slagyr/isaac-http.git"
                                             :git/sha "4fdd535bb7231fa18d7812c6f0d5b2d35fab740c"}
          com.cleancoders.c3kit/apron       {:mvn/version "3.0.0"}
@@ -33,7 +33,7 @@
                                                                        :git/sha   "edc18481808a050f8c2fd657f2e966e6040fcfc3"
                                                                        :deps/root "spec-support"}
                        io.github.slagyr/isaac-agent-spec              {:git/url   "https://github.com/slagyr/isaac-agent.git"
-                                                                       :git/sha   "00ad7845e9fc7b590b2b317029ff1072638228e2"
+                                                                       :git/sha   "12eb0d9dff5330060a0d04d63a1649ee3fdd805d"
                                                                        :deps/root "spec"}
                        io.github.slagyr/isaac-episodes                 {:git/url "https://github.com/slagyr/isaac-episodes.git"
                                                                        :git/sha "541f9f93b33b92a357e909f4f57d05cc75077194"
@@ -53,7 +53,7 @@
 
   :features {:extra-paths ["spec"]
              :extra-deps  {io.github.slagyr/isaac-agent-spec              {:git/url   "https://github.com/slagyr/isaac-agent.git"
-                                                                            :git/sha   "00ad7845e9fc7b590b2b317029ff1072638228e2"
+                                                                            :git/sha   "12eb0d9dff5330060a0d04d63a1649ee3fdd805d"
                                                                             :deps/root "spec"}
                            io.github.slagyr/isaac-episodes                  {:git/url "https://github.com/slagyr/isaac-episodes.git"
                                                                             :git/sha "541f9f93b33b92a357e909f4f57d05cc75077194"
