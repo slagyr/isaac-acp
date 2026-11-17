@@ -23,8 +23,8 @@
         io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
                                            :git/sha "edc18481808a050f8c2fd657f2e966e6040fcfc3"
                                            :deps/root "spec-support"}
-        io.github.slagyr/isaac-agent {:git/url "https://github.com/slagyr/isaac-agent.git" :git/sha "12eb0d9dff5330060a0d04d63a1649ee3fdd805d"}
-        io.github.slagyr/isaac-agent-spec {:git/url "https://github.com/slagyr/isaac-agent.git" :git/sha "12eb0d9dff5330060a0d04d63a1649ee3fdd805d" :deps/root "spec"}
+        io.github.slagyr/isaac-agent {:git/url "https://github.com/slagyr/isaac-agent.git" :git/sha "d75c43216e2eea821bdb590c0d276ecd2777a47d"}
+        io.github.slagyr/isaac-agent-spec {:git/url "https://github.com/slagyr/isaac-agent.git" :git/sha "d75c43216e2eea821bdb590c0d276ecd2777a47d" :deps/root "spec"}
         io.github.slagyr/isaac-episodes {:git/url "https://github.com/slagyr/isaac-episodes.git"
                                          :git/sha "541f9f93b33b92a357e909f4f57d05cc75077194"
                                          :exclusions [io.github.slagyr/isaac-agent

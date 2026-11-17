@@ -232,7 +232,6 @@
       (cli-steps/isaac-run "acp --session no-model")
       (should= 0 (g/get :exit-code))
       (should (str/includes? (g/get :output) "no model configured for crew: main"))))
-    )
 
   (it "writes JSON response to stdout for each request"
     (with-redefs [dispatch/handle-line (fn [_ _] (jrpc/result 1 {:ok true}))]
@@ -431,6 +430,7 @@
         (should (str/includes? (str err) "initialize"))))
     )
   )
+)
 
 (describe "ACP stdio attachment lifecycle"
   (around [it]

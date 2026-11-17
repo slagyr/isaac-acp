@@ -681,18 +681,18 @@
       (grover/reset-queue!)
       (tool-registry/clear!))
 
-    (it "returns cancelled when interrupt is set before prompt starts"
+    (it "does not cancel the next prompt when session/cancel arrives with no prompt running"
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
       (grover/enqueue! [{:type "text" :content "Hello" :model "echo"}])
       (sut/dispatch-line prompt-opts
                          (jrpc/notification-line "session/cancel"
                                                  {:sessionId "agent:main:acp:direct:user1"}))
-      (let [result (-> (sut/dispatch-line prompt-opts
+      (let [result (-> (sut/dispatch-line (assoc prompt-opts :output-writer (StringWriter.))
                                           (jrpc/request-line 30 "session/prompt"
                                                              {:sessionId "agent:main:acp:direct:user1"
                                                               :prompt [{:type "text" :text "Long task"}]}))
                        (as-> r (if (future? r) (deref r) r)))]
-        (should= "cancelled" (get-in result [:result :stopReason]))))
+        (should= "end_turn" (get-in result [:result :stopReason]))))
 
     (it "logs session/cancel receipt at info with raw params"
       (log/capture-logs
@@ -713,7 +713,12 @@
                                         (jrpc/request-line 31 "session/prompt"
                                                            {:sessionId "agent:main:acp:direct:user1"
                                                             :prompt [{:type "text" :text "think hard"}]})))]
-        (grover/await-delay-start)
+        ;; await-delay-start returns nil until the delay has begun; wait for
+        ;; the turn to be running so the cancel isn't an idle one.
+        (let [deadline (+ (System/currentTimeMillis) 5000)]
+          (while (and (not (grover/await-delay-start))
+                      (< (System/currentTimeMillis) deadline))
+            (Thread/sleep 5)))
         (sut/dispatch-line prompt-opts
                            (jrpc/notification-line "session/cancel"
                                                    {:sessionId "agent:main:acp:direct:user1"}))
@@ -725,7 +730,7 @@
       (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (builtin/register-all!)
-        (grover/enqueue! [{:tool_call "exec__run" :arguments {:command "sleep 30"}}])
+        (grover/enqueue! [{:tool_call "exec__run" :arguments {:command "while :; do sleep 1; done"}}])
         (let [exec-agents {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec/run"]}}}
               started     (promise)
               prompt      (future
@@ -748,7 +753,7 @@
       (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (builtin/register-all!)
-        (grover/enqueue! [{:tool_call "exec__run" :arguments {:command "sleep 30"}}])
+        (grover/enqueue! [{:tool_call "exec__run" :arguments {:command "while :; do sleep 1; done"}}])
         (let [writer      (StringWriter.)
               exec-agents {"main" {:name "main" :soul "You are Isaac." :model "grover" :tools {:allow ["exec/run"]}}}
               started     (promise)

@@ -140,7 +140,7 @@
 
   (it "writes cancelled tool notifications with sessionId"
     (let [writer    (StringWriter.)
-          tool-call {:id "tc-1" :name "exec" :arguments {:command "sleep 30"}}
+          tool-call {:id "tc-1" :name "exec" :arguments {:command "while :; do sleep 1; done"}}
           ch        (sut/channel writer)]
       (comm/on-tool-call ch "agent:main:acp:direct:user1" tool-call)
       (comm/on-tool-cancel ch "agent:main:acp:direct:user1" tool-call)

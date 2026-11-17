@@ -4,6 +4,7 @@
     [cheshire.core :as json]
     [clojure.string :as str]
     [clojure.tools.cli :as tools-cli]
+    [isaac.agent.bridge.cancellation :as bridge-cancel]
     [isaac.foundation.cli.api :as cli-api]
     [isaac.foundation.cli.host :as host]
     [isaac.foundation.cli.registry :as registry]
@@ -119,17 +120,77 @@
 
 (def ^:dynamic *verbose-methods?* false)
 
-(defn- run-loop [handlers]
-  (let [reader (java.io.BufferedReader. (host/in))]
-    (loop []
-      (when-let [line (.readLine reader)]
-        (when-not (str/blank? line)
-          (when *verbose-methods?*
-            (when-let [method (:method (try (json/parse-string line true) (catch Exception _ nil)))]
-              (binding [*out* *err*]
-                (println method))))
-          (write-result! (dispatch/handle-line handlers line)))
-        (recur)))))
+(defn- line-writer
+  "Wraps `out` so each newline-terminated line reaches it whole. Prompt turns
+   and the reader thread share stdout, and jrpc/write-message! writes a line
+   and its newline as separate calls, so lines are buffered per thread and
+   written under one lock."
+  [^java.io.Writer out]
+  (let [buffer (ThreadLocal.)
+        sb     (fn [] (or (.get buffer) (let [b (StringBuilder.)] (.set buffer b) b)))
+        emit!  (fn [^StringBuilder b]
+                 (when (pos? (.length b))
+                   (locking out
+                     (.write out (str b))
+                     (.flush out))
+                   (.setLength b 0)))
+        append (fn [x]
+                 (let [b (sb)]
+                   (.append b (if (int? x) (str (char x)) (str x)))
+                   (when (str/ends-with? (str b) "\n") (emit! b))))]
+    (proxy [java.io.Writer] []
+      (write
+        ([x] (append (if (string? x) x (if (int? x) x (String. ^chars x)))))
+        ([x off len] (append (if (string? x) (subs x off (+ off len)) (String. ^chars x (int off) (int len))))))
+      (flush [] (emit! (sb)))
+      (close [] (emit! (sb))))))
+
+(defn- parse-message [line]
+  (try (json/parse-string line true) (catch Exception _ nil)))
+
+(defn- prompt-session
+  "The session a session/prompt line runs against, or nil for every other
+   message. Prompts run off the reader thread; the rest run inline."
+  [message]
+  (when (= "session/prompt" (:method message))
+    (or (get-in message [:params :sessionId]) ::no-session)))
+
+(defn- await-quietly [turn]
+  (when turn
+    (try @turn (catch Exception _ nil))))
+
+(defn- run-loop
+  "Reads one JSON-RPC line at a time. session/prompt runs in a future so the
+   reader keeps going and a session/cancel reaches the running turn; prompts
+   for one session chain, so each session has one prompt at a time and its
+   responses stay in request order. Each prompt is registered with the bridge
+   before its future starts, so a cancel read right after it still reaches
+   that prompt. Waits for running prompts at end of input."
+  [handlers]
+  (let [reader  (java.io.BufferedReader. (host/in))
+        handle! (bound-fn [line] (write-result! (dispatch/handle-line handlers line)))]
+    (loop [turns {}]
+      (if-let [line (.readLine reader)]
+        (if (str/blank? line)
+          (recur turns)
+          (let [message (parse-message line)]
+            (when *verbose-methods?*
+              (when-let [method (:method message)]
+                (binding [*out* *err*]
+                  (println method))))
+            (if-let [session (prompt-session message)]
+              (let [previous (get turns session)
+                    token    (bridge-cancel/expect-turn! session)]
+                (recur (assoc turns session (future
+                                              (try
+                                                (await-quietly previous)
+                                                (handle! line)
+                                                (finally
+                                                  (bridge-cancel/settle-turn! session token)))))))
+
+              (do (handle! line)
+                  (recur turns)))))
+        (run! await-quietly (vals turns))))))
 
 (defn- run-loop-verbose [handlers]
   (binding [*verbose-methods?* true]
@@ -223,7 +284,8 @@
       1
 
       :else
-      (run-local opts))))
+      (binding [*out* (line-writer *out*)]
+        (run-local opts)))))
 
 (defn run-fn [{:keys [_raw-args] :as opts}]
   (let [{:keys [options errors]} (parse-option-map (or _raw-args []))]

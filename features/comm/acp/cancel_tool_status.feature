@@ -15,7 +15,7 @@ Feature: Cancelled Tool Call Status
       | cancel-tool |
     And the following model responses are queued:
       | type      | tool_call | arguments               |
-      | tool_call | exec__run | {"command": "sleep 30"} |
+      | tool_call | exec__run | {"command": "while :; do sleep 1; done"} |
     When the ACP client sends request 2 asynchronously:
       | key                   | value          |
       | method                | session/prompt |

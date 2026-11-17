@@ -3,6 +3,7 @@
     (java.io StringWriter)
     (java.util.concurrent LinkedBlockingQueue TimeUnit))
   (:require
+    [isaac.agent.bridge.cancellation :as bridge-cancel]
     [cheshire.core :as json]
     [clojure.edn :as edn]
     [clojure.java.io :as io]
@@ -107,6 +108,8 @@
 (defn- close-acp-state! []
   (when-let [turn* (g/get :acp-turn-future)]
     (future-cancel turn*))
+  (some-> (g/get :acp-delay-release) future-cancel)
+  (g/dissoc! :acp-delay-release)
   (g/dissoc! :acp-turn-future)
   (g/dissoc! :live-output-writer)
   (g/dissoc! :acp-output-offset)
@@ -257,14 +260,19 @@
         {:keys [state-dir live-writer run!]} (dispatch-result line)]
     (cond
       (and async? (= "session/prompt" (:method message)))
-      (let [turn* (future
-                    (when (and state-dir live-writer)
-                      (g/assoc! :live-output-writer live-writer)
-                      (g/assoc! :acp-output-offset (or (g/get :acp-output-offset) 0)))
-                    (try
-                      (run!)
-                      (finally
-                        (g/dissoc! :live-output-writer))))]
+      ;; Register the prompt with the bridge before it runs, as the stdio
+      ;; loop does, so a cancel sent right after it reaches this prompt.
+      (let [session (get-in message [:params :sessionId])
+            token   (bridge-cancel/expect-turn! session)
+            turn*   (future
+                      (when (and state-dir live-writer)
+                        (g/assoc! :live-output-writer live-writer)
+                        (g/assoc! :acp-output-offset (or (g/get :acp-output-offset) 0)))
+                      (try
+                        (run!)
+                        (finally
+                          (bridge-cancel/settle-turn! session token)
+                          (g/dissoc! :live-output-writer))))]
         (await-in-flight-llm-gate! turn*)
         (g/assoc! :acp-turn-future turn*))
 
@@ -538,6 +546,12 @@
   (ensure-grover-test-provider!)
   true)
 
+(defn delayed-llm-response-released-after [seconds]
+  (g/assoc! :acp-delay-release (future
+                                 (Thread/sleep (* 1000 seconds))
+                                 (grover/release-delay!)))
+  true)
+
 ;; region ----- Step routing -----
 
 (defwhen "the ACP client sends request {id:int}:" isaac.comm.acp.acp-steps/acp-client-sends-request)
@@ -576,6 +590,10 @@
 (defgiven "the ACP commands are registered" isaac.comm.acp.acp-steps/acp-commands-registered
   "No-op step that forces gherclj to load ACP step namespaces so command
    registration is installed for CLI features.")
+
+(defgiven "the delayed LLM response is released after {seconds:int} seconds" isaac.comm.acp.acp-steps/delayed-llm-response-released-after
+  "Bounds 'the LLM response is delayed': a background release after N
+   seconds, so a turn that never sees its cancel still ends.")
 
 (defgiven "an in-memory Isaac state directory {path:string}" isaac.foundation.root-steps/in-memory-state
   "Compatibility route for older ACP features that still refer to an
