@@ -453,7 +453,8 @@
 
 (defn- last-notification-content []
   (->> (or (g/get :last-acp-notifications) [])
-       (map #(get-in % [:params :update :content :text]))
+       (map #(or (get-in % [:params :update :content :text])
+                 (get-in % [:params :update :content 0 :content :text])))
        (remove nil?)
        (str/join "\n")))
 

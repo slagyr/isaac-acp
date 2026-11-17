@@ -285,6 +285,21 @@
         (should= "3 matches" (get-in (second notifications) [:params :update :rawOutput]))
         (should= "found 3 errors" (get-in (nth notifications 2) [:params :update :content :text]))))
 
+    (it "replays the stored isError flag as failed even when content has no prefix"
+      (session-helper/create-session! test-dir "resume-error")
+      (session-helper/append-message! test-dir "resume-error" {:role "assistant"
+                                                             :content [{:type "toolCall" :id "tc-1"
+                                                                        :name "grep" :arguments {:q "x"}}]})
+      (session-helper/append-message! test-dir "resume-error" {:role "toolResult" :toolCallId "tc-1"
+                                                             :content "boom" :isError true})
+      (let [writer (StringWriter.)]
+        (sut/dispatch-line {:state-dir test-dir :output-writer writer}
+                           (jrpc/request-line 7 "session/load" {:sessionId "resume-error"}))
+        (let [update (get-in (first (parsed-output writer)) [:params :update])]
+          (should= "failed" (:status update))
+          (should= "search" (:kind update))
+          (should= "boom" (:rawOutput update)))))
+
     (it "replays string tool results with expandable ACP content blocks"
       (session-helper/create-session! test-dir "resume-lantern")
       (session-helper/append-message! test-dir "resume-lantern" {:role "user" :content "inspect the lantern"})
@@ -749,7 +764,7 @@
                                                      {:sessionId "agent:main:acp:direct:user1"}))
           (should= "cancelled" (get-in (deref prompt 5000 nil) [:result :stopReason])))))
 
-    (it "emits a cancelled tool_call_update when session/cancel interrupts an in-flight exec tool"
+    (it "emits a v1 failed tool_call_update when session/cancel interrupts an in-flight exec tool"
       (marigold-agent/with-real-manifest
         (session-helper/create-session! test-dir "agent:main:acp:direct:user1")
         (builtin/register-all!)
@@ -776,7 +791,8 @@
                 statuses      (map #(select-keys (get-in % [:params :update]) [:sessionUpdate :status])
                                    notifications)]
             (should-contain {:sessionUpdate "tool_call" :status "pending"} statuses)
-            (should-contain {:sessionUpdate "tool_call_update" :status "cancelled"} statuses)))))
+            (should-contain {:sessionUpdate "tool_call_update" :status "failed"} statuses)
+            (should (some #(= "cancelled" (get-in % [:params :update :content 0 :content :text])) notifications))))))
 
     (it "appends exactly one error entry when run-turn! throws an uncaught exception"
       (session-helper/create-session! test-dir "agent:main:acp:direct:user1")

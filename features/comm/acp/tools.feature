@@ -7,6 +7,7 @@ Feature: ACP Tool Calls
     And the following sessions exist:
       | name      |
       | tool-test |
+    And the crew "main" allows tools: "exec/run"
     And the built-in tools are registered
     And the ACP client has initialized
 
@@ -53,8 +54,8 @@ Feature: ACP Tool Calls
       | params.prompt[0].text | Run echo       |
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.title  | params.update.kind | params.update.rawInput.command |
-      | session/update | tool_call                   | exec__run: echo hi   | other              | echo hi                        |
-      | session/update | tool_call_update            | exec__run: echo hi   | other              | echo hi                        |
+      | session/update | tool_call                   | exec__run: echo hi   | execute            | echo hi                        |
+      | session/update | tool_call_update            | exec__run: echo hi   | execute            | echo hi                        |
 
   Scenario: Tool result includes toolCallId, rawOutput, and expandable content
     Given the following model responses are queued:
@@ -83,5 +84,35 @@ Feature: ACP Tool Calls
       | params.prompt[0].text | Ring the bell  |
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.title     | params.update.kind | params.update.rawInput.command |
-      | session/update | tool_call                   | exec__run: echo tide-signal | other              | echo tide-signal               |
-      | session/update | tool_call_update            | exec__run: echo tide-signal | other              | echo tide-signal               |
+      | session/update | tool_call                   | exec__run: echo tide-signal | execute            | echo tide-signal               |
+      | session/update | tool_call_update            | exec__run: echo tide-signal | execute            | echo tide-signal               |
+
+  Scenario: an error tool result reports failed
+    Given the following model responses are queued:
+      | tool_call | arguments             |
+      | exec__run | {"command": "exit 3"} |
+    When the ACP client sends request 45:
+      | key                   | value          |
+      | method                | session/prompt |
+      | params.sessionId      | tool-test      |
+      | params.prompt[0].type | text           |
+      | params.prompt[0].text | Fail please    |
+    Then the ACP agent sends notifications:
+      | method         | params.update.sessionUpdate | params.update.status | params.update.kind |
+      | session/update | tool_call                   | pending              | execute            |
+      | session/update | tool_call_update            | failed               | execute            |
+
+  Scenario: successful exec output beginning Error: reports completed
+    Given the following model responses are queued:
+      | tool_call | arguments                       |
+      | exec__run | {"command": "echo 'Error: x'"} |
+    When the ACP client sends request 46:
+      | key                   | value          |
+      | method                | session/prompt |
+      | params.sessionId      | tool-test      |
+      | params.prompt[0].type | text           |
+      | params.prompt[0].text | Echo a label   |
+    Then the ACP agent sends notifications:
+      | method         | params.update.sessionUpdate | params.update.status | params.update.kind |
+      | session/update | tool_call                   | pending              | execute            |
+      | session/update | tool_call_update            | completed            | execute            |

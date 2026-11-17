@@ -17,6 +17,22 @@
        (remove str/blank?)
        (mapv #(json/parse-string % true))))
 
+(def ^:private acp-v1-tool-kinds
+  #{"read" "edit" "delete" "move" "search" "execute" "think" "fetch" "switch_mode" "other"})
+
+(def ^:private acp-v1-tool-call-statuses #{"pending" "in_progress" "completed" "failed"})
+
+;; Keep this independent of the implementation map: new agent built-ins must fail until classified.
+(def ^:private expected-tool-kinds
+  {"fs__read" "read" "fs__write" "edit" "fs__edit" "edit" "fs__multi_edit" "edit"
+   "fs__grep" "search" "fs__glob" "search" "web__fetch" "fetch" "web__search" "search"
+   "memory__write" "edit" "memory__get" "read" "memory__search" "search"
+   "exec__run" "execute" "timer__set" "other" "timer__list" "read" "timer__cancel" "other"
+   "subagent__spawn" "other" "subagent__list" "read" "subagent__cancel" "other"
+   "turn__get" "read" "session__info" "read" "session__model" "other"
+   "session__list" "read" "session__read" "read" "prompt__load" "read" "prompt__list" "read"
+   "comm__send" "other" "hail__send" "other" "provider__quota" "fetch"})
+
 (describe "ACP channel"
 
   (around [it]
@@ -148,8 +164,67 @@
         (should= ["tool_call" "tool_call_update"]
                  (mapv #(get-in % [:params :update :sessionUpdate]) notifications))
         (should= "pending" (get-in (first notifications) [:params :update :status]))
-        (should= "cancelled" (get-in (second notifications) [:params :update :status]))
+        (should= "failed" (get-in (second notifications) [:params :update :status]))
         (should= "tc-1" (get-in (second notifications) [:params :update :toolCallId])))))
+
+  (it "maps every built-in tool at the pinned isaac-agent sha to an explicit ACP v1 kind"
+    (let [built-ins @(requiring-resolve 'isaac.agent.tool.builtin/ordered-built-in-tools)]
+      (should= (set built-ins) (set (keys expected-tool-kinds)))
+      (doseq [name built-ins]
+        (let [writer (StringWriter.)]
+          (comm/on-tool-call (sut/channel writer) "s1" {:id "tc-1" :name name :arguments {}})
+          (let [kind (get-in (first (parsed-output writer)) [:params :update :kind])]
+            (should-contain kind acp-v1-tool-kinds)
+            (should= [name (expected-tool-kinds name)] [name kind]))))))
+
+  (it "classifies legacy transcript names and module tools"
+    (doseq [[name kind] {"grep" "search" "glob" "search" "skill__load" "read"
+                        "memory_write" "edit" "web_fetch" "fetch" "run_terminal_cmd" "execute"
+                        "dream__habit" "read"}]
+      (let [writer (StringWriter.)]
+        (comm/on-tool-call (sut/channel writer) "s1" {:id "tc-1" :name name :arguments {}})
+        (should= kind (get-in (first (parsed-output writer)) [:params :update :kind])))))
+
+  (it "reports flagged errors as failed even without a text prefix"
+    (let [writer (StringWriter.)]
+      (comm/on-tool-result (sut/channel writer) "s1"
+                           {:id "tc-1" :name "exec__run" :arguments {:command "exit 3"} :error? true} "exit 3")
+      (let [update (get-in (first (parsed-output writer)) [:params :update])]
+        (should= "failed" (:status update))
+        (should-not (contains? update :error?)))))
+
+  (it "reports flagged successes as completed even when the text begins Error:"
+    (let [writer (StringWriter.)]
+      (comm/on-tool-result (sut/channel writer) "s1"
+                           {:id "tc-1" :name "exec__run" :arguments {:command "echo 'Error: x'"} :error? false}
+                           "Error: x")
+      (should= "completed" (get-in (first (parsed-output writer)) [:params :update :status]))))
+
+  (it "falls back to the Error: prefix only when the tool result has no error flag"
+    (let [writer (StringWriter.)]
+      (comm/on-tool-result (sut/channel writer) "s1" {:id "tc-1" :name "exec__run" :arguments {}}
+                           "Error: unknown tool")
+      (should= "failed" (get-in (first (parsed-output writer)) [:params :update :status]))))
+
+  (it "replays stored isError without requiring a text prefix"
+    (should= "failed" (get-in (sut/replay-tool-call-update "s1"
+                                                           {:id "tc-1" :name "exec__run" :arguments {}}
+                                                           "exit 3" true)
+                              [:params :update :status])))
+
+  (it "replays an explicit stored success instead of inferring failure from Error: text"
+    (should= "completed" (get-in (sut/replay-tool-call-update "s1"
+                                                              {:id "tc-1" :name "exec__run" :arguments {}}
+                                                              "Error: x" false)
+                                 [:params :update :status])))
+
+  (it "reports cancellation using a v1 status and cancelled content"
+    (let [writer (StringWriter.)]
+      (comm/on-tool-cancel (sut/channel writer) "s1" {:id "tc-1" :name "exec__run" :arguments {}})
+      (let [update (get-in (first (parsed-output writer)) [:params :update])]
+        (should-contain (:status update) acp-v1-tool-call-statuses)
+        (should= "failed" (:status update))
+        (should= "cancelled" (get-in update [:content 0 :content :text])))))
 
   (it "formats available commands update notifications"
     (let [notification (sut/available-commands-update "cmd-test" [{:name "status"} {:name "model"} {:name "crew"}])]

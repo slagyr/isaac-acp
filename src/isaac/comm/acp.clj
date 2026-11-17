@@ -1,5 +1,6 @@
 (ns isaac.comm.acp
   (:require
+    [clojure.string :as str]
     [isaac.comm.acp.jsonrpc :as jsonrpc]
     [isaac.agent.comm.protocol :as comm]
     [isaac.agent.comm.render :as render]
@@ -51,13 +52,31 @@
     (jsonrpc/session-update session-id {:sessionUpdate     "available_commands_update"
                                         :availableCommands commands})))
 
+(def ^:private tool-kinds
+  ;; ACP v1 ToolKind. Explicitly classify agent built-ins; preserve historic names for session/load.
+  {"fs__read" "read" "fs__write" "edit" "fs__edit" "edit" "fs__multi_edit" "edit"
+   "fs__grep" "search" "fs__glob" "search" "web__fetch" "fetch" "web__search" "search"
+   "memory__write" "edit" "memory__get" "read" "memory__search" "search"
+   "exec__run" "execute" "timer__set" "other" "timer__list" "read" "timer__cancel" "other"
+   "subagent__spawn" "other" "subagent__list" "read" "subagent__cancel" "other"
+   "turn__get" "read" "session__info" "read" "session__model" "other"
+   "session__list" "read" "session__read" "read" "prompt__load" "read" "prompt__list" "read"
+   "comm__send" "other" "hail__send" "other" "provider__quota" "fetch"
+   "recall__search" "search" "recall__scene" "read" "dream__habit" "read"
+   "read" "read" "write" "edit" "edit" "edit" "exec" "execute"
+   "grep" "search" "glob" "search" "skill__load" "read" "skill__list" "read"
+   "load_skill" "read" "list_skills" "read" "memory_write" "edit" "memory_get" "read"
+   "memory_search" "search" "web_fetch" "fetch" "web_search" "search"
+   "session_info" "read" "search_replace" "edit" "run_terminal_cmd" "execute"})
+
 (defn- tool-kind [tool-name]
-  (case tool-name
-    "read"  "read"
-    "edit"  "edit"
-    "write" "edit"
-    "exec"  "execute"
-    "other"))
+  (get tool-kinds tool-name "other"))
+
+(defn- error-prefix? [result]
+  (and (string? result) (str/starts-with? result "Error:")))
+
+(defn- result-status [result error?]
+  (if (if (some? error?) error? (error-prefix? result)) "failed" "completed"))
 
 (defn- tool-title [tool-name arguments]
   (let [summary (or (:command arguments)
@@ -94,12 +113,12 @@
                                                                         :text (pr-str (:arguments tool-call))}}]}
                                             (tool-call-fields tool-call))))
 
-(defn- replay-tool-call-notification [session-id tool-call result]
+(defn- replay-tool-call-notification [session-id tool-call result error?]
   {:jsonrpc "2.0"
    :method  "session/update"
    :params  {:sessionId session-id
              :update    (cond-> (merge {:sessionUpdate "tool_call"
-                                        :status        "completed"
+                                        :status        (result-status result error?)
                                         :toolCallId    (:id tool-call)}
                                        (tool-call-fields tool-call))
                           (some? result)
@@ -112,7 +131,7 @@
    :params  {:sessionId session-id
              :update    (merge {:sessionUpdate "tool_call_update"
                                 :toolCallId    (:id tool-call)
-                                :status        "completed"
+                                :status        (result-status result (when (contains? tool-call :error?) (:error? tool-call)))
                                 :rawOutput     result
                                 :content       (tool-result-content result)}
                                (tool-call-fields tool-call))}})
@@ -123,7 +142,8 @@
    :params  {:sessionId session-id
              :update {:sessionUpdate "tool_call_update"
                       :toolCallId    (:id tool-call)
-                      :status        "cancelled"}}})
+                      :status        "failed"
+                      :content       (tool-result-content "cancelled")}}})
 
 (defn- bulletin->thought [bulletin]
   (case (:kind bulletin)
@@ -211,8 +231,10 @@
 (defn user-text-update [session-id text]
   (user-text-notification session-id text))
 
-(defn replay-tool-call-update [session-id tool-call result]
-  (replay-tool-call-notification session-id tool-call result))
+(defn replay-tool-call-update
+  ([session-id tool-call result] (replay-tool-call-update session-id tool-call result nil))
+  ([session-id tool-call result error?]
+   (replay-tool-call-notification session-id tool-call result error?)))
 
 (defn available-commands-update [session-id commands]
   (available-commands-notification session-id commands))

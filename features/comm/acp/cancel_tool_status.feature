@@ -1,6 +1,6 @@
 Feature: Cancelled Tool Call Status
   When a turn is cancelled while a tool call is in flight, the
-  agent must send a tool_call_update with status:cancelled so
+  agent must send a tool_call_update with status:failed and content "cancelled" so
   the client can clear the pending indicator.
 
   Background:
@@ -9,7 +9,7 @@ Feature: Cancelled Tool Call Status
     And the built-in tools are registered
     And the ACP client has initialized
 
-  Scenario: cancelled tool call sends a cancelled status update
+  Scenario: cancelled tool call sends a v1 failed status update
     Given the following sessions exist:
       | name        |
       | cancel-tool |
@@ -31,4 +31,10 @@ Feature: Cancelled Tool Call Status
       | params.sessionId | cancel-tool    |
     Then the ACP agent sends notifications:
       | method         | params.update.sessionUpdate | params.update.status |
-      | session/update | tool_call_update            | cancelled            |
+      | session/update | tool_call_update            | failed               |
+    And the notification content matches:
+      | pattern   |
+      | cancelled |
+    And the ACP agent sends response 2:
+      | key               | value     |
+      | result.stopReason | cancelled |

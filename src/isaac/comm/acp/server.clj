@@ -180,8 +180,9 @@
                  (when (and (= "message" (:type entry))
                             (= "toolResult" role)
                             tc-id)
-                   [tc-id (or (content->text (:content message))
-                              (some-> (:content message) str))]))))
+                   [tc-id {:text   (or (content->text (:content message))
+                                       (some-> (:content message) str))
+                           :error? (when (contains? message :isError) (:isError message))}]))))
        (into {})))
 
 (defn- replay-transcript-entry! [output-writer session-id tool-results entry]
@@ -197,8 +198,9 @@
       (cond
         (seq tool-calls)
         (doseq [tool-call tool-calls]
-          (jrpc/write-message! output-writer
-                              (acp-comm/replay-tool-call-update session-id tool-call (get tool-results (:id tool-call)))))
+          (let [{:keys [text error?]} (get tool-results (:id tool-call))]
+            (jrpc/write-message! output-writer
+                                 (acp-comm/replay-tool-call-update session-id tool-call text error?))))
 
         (= "user" role)
         (when-let [text (content->text (:content message))]
